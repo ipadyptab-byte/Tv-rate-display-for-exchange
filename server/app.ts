@@ -15,22 +15,32 @@ export async function createApp() {
 
   // CORS middleware - allow cross-origin requests from the frontend
   app.use((req, res, next) => {
-    const allowedOrigins = [
-      'https://tv-rate-display-for-exchange.vercel.app',
-      'https://tvdisplay-rates.vercel.app',
-      'http://localhost:5173',
-      'http://localhost:3000',
-    ];
+    // Allow all Vercel preview deployments and production
     const origin = req.headers.origin;
+    const isVercelDeployment = origin?.includes('.vercel.app');
     
-    if (origin && allowedOrigins.includes(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
+    if (isVercelDeployment || !origin) {
+      // Allow any Vercel deployment or same-origin requests
+      res.setHeader('Access-Control-Allow-Origin', origin || '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.setHeader('Access-Control-Allow-Credentials', 'true');
-    } else if (!origin) {
-      // Allow requests without Origin header (e.g., same-origin requests)
-      res.setHeader('Access-Control-Allow-Origin', '*');
+    } else {
+      // Allow specific known origins
+      const allowedOrigins = [
+        'https://tv-rate-display-for-exchange.vercel.app',
+        'https://tvdisplay-rates.vercel.app',
+        'http://localhost:5173',
+        'http://localhost:3000',
+      ];
+      if (allowedOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+      } else {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+      }
     }
     
     if (req.method === 'OPTIONS') {
