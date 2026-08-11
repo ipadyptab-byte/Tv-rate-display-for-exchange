@@ -1935,6 +1935,27 @@ async function createApp() {
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
   app.use((req, res, next) => {
+    const allowedOrigins = [
+      "https://tv-rate-display-for-exchange.vercel.app",
+      "https://tvdisplay-rates.vercel.app",
+      "http://localhost:5173",
+      "http://localhost:3000"
+    ];
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    } else if (!origin) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+    if (req.method === "OPTIONS") {
+      return res.status(204).end();
+    }
+    next();
+  });
+  app.use((req, res, next) => {
     const start = Date.now();
     const path = req.path;
     let capturedJsonResponse = void 0;
