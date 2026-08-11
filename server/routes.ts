@@ -259,6 +259,48 @@ export async function registerRoutes(app: Express): Promise<void> {
     }
   });
 
+  // Debug endpoint to check Gemini API configuration
+  app.get("/api/debug/gemini", async (req, res) => {
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      
+      if (!apiKey) {
+        return res.json({
+          configured: false,
+          error: "GEMINI_API_KEY environment variable is not set"
+        });
+      }
+      
+      // Mask the API key for security
+      const maskedKey = apiKey.length > 10 
+        ? apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4)
+        : "***";
+      
+      // Try to initialize the AI client and test connectivity
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey });
+      
+      // Try a simple models.list call to verify the key works
+      const models = await ai.models.list();
+      const imageModels = models.filter(m => 
+        m.name && (m.name.includes("imagen") || m.name.includes("gemini-2") || m.name.includes("flash"))
+      );
+      
+      res.json({
+        configured: true,
+        maskedKey,
+        availableModels: imageModels.map(m => m.name).slice(0, 10),
+        totalModels: models.length
+      });
+    } catch (error: any) {
+      res.json({
+        configured: true,
+        error: error.message,
+        notice: "API key may be invalid or quota exceeded"
+      });
+    }
+  });
+
   // Fetch and store rates from external API
   // GET /api/rates/sync - fetches latest 24k sale and silver sale, computes others via settings, stores to Postgres
   app.get("/api/rates/sync", async (req, res) => {

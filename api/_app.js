@@ -1321,6 +1321,36 @@ async function registerRoutes(app) {
       res.status(500).json({ error: error.message });
     }
   });
+  app.get("/api/debug/gemini", async (req, res) => {
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.json({
+          configured: false,
+          error: "GEMINI_API_KEY environment variable is not set"
+        });
+      }
+      const maskedKey = apiKey.length > 10 ? apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4) : "***";
+      const { GoogleGenAI: GoogleGenAI2 } = await import("@google/genai");
+      const ai = new GoogleGenAI2({ apiKey });
+      const models = await ai.models.list();
+      const imageModels = models.filter(
+        (m) => m.name && (m.name.includes("imagen") || m.name.includes("gemini-2") || m.name.includes("flash"))
+      );
+      res.json({
+        configured: true,
+        maskedKey,
+        availableModels: imageModels.map((m) => m.name).slice(0, 10),
+        totalModels: models.length
+      });
+    } catch (error) {
+      res.json({
+        configured: true,
+        error: error.message,
+        notice: "API key may be invalid or quota exceeded"
+      });
+    }
+  });
   app.get("/api/rates/sync", async (req, res) => {
     try {
       const force = req.query.force !== "0";
