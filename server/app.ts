@@ -5,7 +5,7 @@ import { registerRoutes } from "./routes";
 import { log } from "./log";
 import { getDatabaseUrl } from "./db";
 
-import { setupVite, serveStatic } from "./vite";
+
 
 export async function createApp() {
   const app = express();
@@ -146,8 +146,10 @@ export async function createApp() {
     // Vercel serves static frontend files via CDN rewrites in vercel.json.
     // Serverless functions only need to handle API routes.
   } else if (process.env.NODE_ENV !== "production") {
+    const { setupVite } = await import("./vite");
     await setupVite(app);
   } else {
+    const { serveStatic } = await import("./vite");
     serveStatic(app);
   }
 

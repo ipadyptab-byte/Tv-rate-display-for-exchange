@@ -147,7 +147,7 @@ var init_schema = __esm({
 
 // server/app.ts
 import "dotenv/config";
-import express2 from "express";
+import express from "express";
 import postgres from "postgres";
 
 // server/storage.ts
@@ -1929,100 +1929,14 @@ function log(message, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
-// server/vite.ts
-import express from "express";
-import fs from "fs";
-import path2 from "path";
-import { createServer as createViteServer, createLogger } from "vite";
-
-// vite.config.ts
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import path from "path";
-import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
-var vite_config_default = defineConfig({
-  plugins: [
-    react(),
-    runtimeErrorOverlay(),
-    ...process.env.NODE_ENV !== "production" && process.env.REPL_ID !== void 0 ? [
-      await import("@replit/vite-plugin-cartographer").then(
-        (m) => m.cartographer()
-      )
-    ] : []
-  ],
-  resolve: {
-    alias: {
-      "@": path.resolve(import.meta.dirname, "client", "src"),
-      "@shared": path.resolve(import.meta.dirname, "shared"),
-      "@assets": path.resolve(import.meta.dirname, "attached_assets")
-    }
-  },
-  root: path.resolve(import.meta.dirname, "client"),
-  build: {
-    outDir: path.resolve(import.meta.dirname, "public"),
-    emptyOutDir: true
-  },
-  server: {
-    fs: {
-      strict: true,
-      deny: ["**/.*"]
-    }
-  }
-});
-
-// server/vite.ts
-async function setupVite(app) {
-  const vite = await createViteServer({
-    ...vite_config_default,
-    configFile: false,
-    customLogger: createLogger(),
-    server: {
-      middlewareMode: true,
-      hmr: false
-    },
-    appType: "custom"
-  });
-  app.use(vite.middlewares);
-  app.use("*", async (req, res, next) => {
-    const url = req.originalUrl;
-    if (url.startsWith("/api")) {
-      return next();
-    }
-    try {
-      const clientTemplate = path2.resolve(import.meta.dirname, "..", "client", "index.html");
-      let template = await fs.promises.readFile(clientTemplate, "utf-8");
-      template = await vite.transformIndexHtml(url, template);
-      res.status(200).set({ "Content-Type": "text/html" }).end(template);
-    } catch (e) {
-      vite.ssrFixStacktrace(e);
-      next(e);
-    }
-  });
-}
-function serveStatic(app) {
-  const distPath = path2.resolve(import.meta.dirname, "..", "public");
-  if (!fs.existsSync(distPath)) {
-    throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`
-    );
-  }
-  app.use(express.static(distPath));
-  app.use("*", (req, res, next) => {
-    if (req.originalUrl.startsWith("/api")) {
-      return next();
-    }
-    res.sendFile(path2.resolve(distPath, "index.html"));
-  });
-}
-
 // server/app.ts
 async function createApp() {
-  const app = express2();
-  app.use(express2.json());
-  app.use(express2.urlencoded({ extended: false }));
+  const app = express();
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
   app.use((req, res, next) => {
     const start = Date.now();
-    const path3 = req.path;
+    const path = req.path;
     let capturedJsonResponse = void 0;
     const originalResJson = res.json;
     res.json = function(bodyJson, ...args) {
@@ -2031,8 +1945,8 @@ async function createApp() {
     };
     res.on("finish", () => {
       const duration = Date.now() - start;
-      if (path3.startsWith("/api")) {
-        let logLine = `${req.method} ${path3} ${res.statusCode} in ${duration}ms`;
+      if (path.startsWith("/api")) {
+        let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
         if (capturedJsonResponse) {
           logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
         }
@@ -2130,8 +2044,10 @@ async function createApp() {
   });
   if (process.env.VERCEL) {
   } else if (process.env.NODE_ENV !== "production") {
+    const { setupVite } = await import("./vite");
     await setupVite(app);
   } else {
+    const { serveStatic } = await import("./vite");
     serveStatic(app);
   }
   app.use((err, _req, res, _next) => {
