@@ -14,7 +14,6 @@ import {
   goldRates,
 } from "@shared/schema";
 import { syncRatesFromExternal, getSyncLogs, getSyncStatus } from "./ratesSync";
-import { GoogleGenAI } from "@google/genai";
 
 // Configure multer for memory storage (no file system)
 const memoryStorage = multer.memoryStorage();
@@ -259,44 +258,52 @@ export async function registerRoutes(app: Express): Promise<void> {
     }
   });
 
-  // Debug endpoint to check Gemini API configuration
-  app.get("/api/debug/gemini", async (req, res) => {
+  // Debug endpoint to check Hugging Face configuration
+  app.get("/api/debug/huggingface", async (req, res) => {
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
+      const token = process.env.HUGGING_FACE_TOKEN;
       
-      if (!apiKey) {
+      if (!token) {
         return res.json({
           configured: false,
-          error: "GEMINI_API_KEY environment variable is not set"
+          error: "HUGGING_FACE_TOKEN environment variable is not set"
         });
       }
       
-      // Mask the API key for security
-      const maskedKey = apiKey.length > 10 
-        ? apiKey.substring(0, 4) + "..." + apiKey.substring(apiKey.length - 4)
+      // Mask the token for security
+      const maskedToken = token.length > 10 
+        ? token.substring(0, 4) + "..." + token.substring(token.length - 4)
         : "***";
       
-      // Try to initialize the AI client and test connectivity
-      const { GoogleGenAI } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey });
-      
-      // Try a simple models.list call to verify the key works
-      const models = await ai.models.list();
-      const imageModels = models.filter(m => 
-        m.name && (m.name.includes("imagen") || m.name.includes("gemini-2") || m.name.includes("flash"))
+      // Test the API with a simple request
+      const testResponse = await fetch(
+        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1",
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          method: "POST",
+          body: JSON.stringify({
+            inputs: "test",
+            parameters: { num_inference_steps: 1 }
+          }),
+        }
       );
       
       res.json({
         configured: true,
-        maskedKey,
-        availableModels: imageModels.map(m => m.name).slice(0, 10),
-        totalModels: models.length
+        maskedToken,
+        modelStatus: testResponse.ok ? "available" : "error",
+        statusCode: testResponse.status,
+        notice: testResponse.ok 
+          ? "API token is valid and model is available"
+          : "Model may be loading or token has insufficient permissions"
       });
     } catch (error: any) {
       res.json({
         configured: true,
         error: error.message,
-        notice: "API key may be invalid or quota exceeded"
+        notice: "Could not connect to Hugging Face API"
       });
     }
   });
@@ -754,7 +761,7 @@ app.put("/api/settings/display/:id?", async (req, res) => {
       promptText = "A stunning high-resolution luxury background of pure Indian plain gold bangles, gold necklaces, and gold coins artfully arranged on dark crimson velvet or soft golden silk background with gentle warm bokeh lighting. Plain gold jewellery backdrop for a gold rate banner, photorealistic vertical 9:16 wallpaper.";
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const hfToken = process.env.HUGGING_FACE_TOKEN;
     
     // Function to construct a high-resolution luxury artwork SVG Data URI
     const createFallbackSvg = (theme: string, customTxt?: string) => {
@@ -870,91 +877,62 @@ app.put("/api/settings/display/:id?", async (req, res) => {
       return `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
     };
 
-    if (!apiKey) {
+    if (!hfToken) {
       return res.json({
         success: true,
         imageUrl: createFallbackSvg(promptType),
         isFallback: true,
-        notice: "GEMINI_API_KEY is not configured on the server. Showing luxury gold template.",
+        notice: "HUGGING_FACE_TOKEN is not configured on the server. Showing luxury gold template.",
       });
     }
 
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
+      // Use Hugging Face Inference API for image generation
+      const modelName = "stabilityai/stable-diffusion-2-1"; // Reliable model for this use case
+
+      const response = await fetch(
+        `https://api-inference.huggingface.co/models/${modelName}`,
+        {
           headers: {
-            "User-Agent": "aistudio-build",
+            Authorization: `Bearer ${hfToken}`,
+            "Content-Type": "application/json",
           },
-        },
-      });
-
-      // Try list of supported models for image generation
-      const candidateModels = [
-        "gemini-3.1-flash-lite-image",
-        "imagen-3.0-generate-002",
-        "gemini-2.5-flash",
-      ];
-
-      let lastError: any = null;
-      let imageUrl: string | null = null;
-
-      for (const modelName of candidateModels) {
-        try {
-          const response = await ai.models.generateContent({
-            model: modelName,
-            contents: promptText,
-            config: {
-              imageConfig: {
-                aspectRatio: "9:16",
-              },
+          method: "POST",
+          body: JSON.stringify({
+            inputs: promptText,
+            parameters: {
+              width: 768,
+              height: 1344, // 9:16 aspect ratio
+              num_inference_steps: 25,
+              guidance_scale: 7.5,
             },
-          });
-
-          if (response.candidates?.[0]?.content?.parts) {
-            for (const part of response.candidates[0].content.parts) {
-              if (part.inlineData) {
-                const mime = part.inlineData.mimeType || "image/png";
-                imageUrl = `data:${mime};base64,${part.inlineData.data}`;
-                break;
-              }
-            }
-          }
-
-          if (imageUrl) break;
-        } catch (err: any) {
-          lastError = err;
-          // Continue to next candidate model
+          }),
         }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Hugging Face API error: ${response.status} - ${errorText}`);
       }
 
-      if (imageUrl) {
-        return res.json({
-          success: true,
-          imageUrl,
-          promptText,
-        });
-      }
-
-      // If API quota limit reached or models failed, return high quality fallback image
-      const errMessage = lastError?.message || String(lastError || "");
-      const isQuotaError = errMessage.includes("429") || errMessage.includes("RESOURCE_EXHAUSTED") || errMessage.includes("Quota");
+      // Get the image as base64
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const base64 = buffer.toString("base64");
+      const imageUrl = `data:image/png;base64,${base64}`;
 
       return res.json({
         success: true,
-        imageUrl: createFallbackSvg(promptType),
-        isFallback: true,
-        notice: isQuotaError
-          ? "Gemini API free tier quota limit was reached. Showing luxury gold artwork template."
-          : "Image generation model busy. Showing luxury gold artwork template.",
+        imageUrl,
+        promptText,
       });
     } catch (error: any) {
-      console.error("Gemini AI Image Generation Error:", error);
+      console.error("Hugging Face Image Generation Error:", error);
       return res.json({
         success: true,
         imageUrl: createFallbackSvg(promptType),
         isFallback: true,
-        notice: "Using luxury gold artwork template as fallback.",
+        notice: "Image generation failed. Showing luxury gold artwork template.",
       });
     }
   });
