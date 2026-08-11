@@ -1,0 +1,6 @@
+{
+  "name": "DEVI JEWELLERS - Gold Rate Display",
+  "description": "Gold and silver rate management system with TV rate display and mobile control panel",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

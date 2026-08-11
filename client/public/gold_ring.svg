@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" width="200" height="160">
+  <defs>
+    <linearGradient id="gold1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFF3A1"/>
+      <stop offset="25%" stop-color="#E5C158"/>
+      <stop offset="50%" stop-color="#9E7817"/>
+      <stop offset="75%" stop-color="#FCDD6B"/>
+      <stop offset="100%" stop-color="#B58B1B"/>
+    </linearGradient>
+    <linearGradient id="gold2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFE680"/>
+      <stop offset="35%" stop-color="#D4AF37"/>
+      <stop offset="70%" stop-color="#8A640F"/>
+      <stop offset="100%" stop-color="#FCE881"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="2" dy="4" stdDeviation="3" flood-color="#3d2b00" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- Golden Spiral Faceted Ring / Bangle -->
+  <g filter="url(#shadow)">
+    <!-- Back loop -->
+    <path d="M 35,50 C 35,15 165,15 165,50 C 165,70 120,80 85,78" 
+          fill="none" stroke="url(#gold1)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 35,50 C 35,15 165,15 165,50 C 165,70 120,80 85,78" 
+          fill="none" stroke="#FFF7C2" stroke-width="4" stroke-linecap="round" opacity="0.6"/>
+
+    <!-- Front loop -->
+    <path d="M 50,78 C 50,55 175,55 175,95 C 175,135 40,135 40,110" 
+          fill="none" stroke="url(#gold2)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 55,75 C 60,60 170,60 170,95 C 170,128 45,128 45,110" 
+          fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" opacity="0.75"/>
+
+    <!-- Faceted diamond cut accents -->
+    <polygon points="45,108 60,98 80,105 65,115" fill="#FFE885" opacity="0.9"/>
+    <polygon points="80,105 100,95 120,102 100,112" fill="#D4AF37" opacity="0.9"/>
+    <polygon points="120,102 140,92 160,98 140,108" fill="#FFF2A1" opacity="0.9"/>
+    
+    <polygon points="40,48 55,38 75,44 60,54" fill="#FFE885" opacity="0.8"/>
+    <polygon points="75,44 95,35 115,42 95,51" fill="#D4AF37" opacity="0.8"/>
+    <polygon points="115,42 135,33 155,40 135,49" fill="#FFF2A1" opacity="0.8"/>
+  </g>
+</svg>
