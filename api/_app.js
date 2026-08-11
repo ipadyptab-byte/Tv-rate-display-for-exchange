@@ -34,13 +34,18 @@ var init_schema = __esm({
       id: serial("id").primaryKey(),
       gold_24k_sale: real("gold_24k_sale").notNull(),
       gold_24k_purchase: real("gold_24k_purchase").notNull(),
+      gold_24k_exchange: real("gold_24k_exchange").default(0),
       gold_22k_sale: real("gold_22k_sale").notNull(),
       gold_22k_purchase: real("gold_22k_purchase").notNull(),
+      gold_22k_exchange: real("gold_22k_exchange").default(0),
       gold_18k_sale: real("gold_18k_sale").notNull(),
       gold_18k_purchase: real("gold_18k_purchase").notNull(),
+      gold_18k_exchange: real("gold_18k_exchange").default(0),
       silver_per_kg_sale: real("silver_per_kg_sale").notNull(),
       silver_per_kg_purchase: real("silver_per_kg_purchase").notNull(),
+      silver_per_kg_exchange: real("silver_per_kg_exchange").default(0),
       is_active: boolean("is_active").default(true),
+      source: text("source").default("api"),
       created_date: timestamp("created_date").defaultNow()
     });
     displaySettings = pgTable("display_settings", {
@@ -96,13 +101,19 @@ var init_schema = __esm({
     });
     rateSettings = pgTable("rate_settings", {
       id: serial("id").primaryKey(),
+      external_rates_url: text("external_rates_url").default("https://www.businessmantra.info/gold_rates/devi_gold_rate/api.php"),
       perc_24k_purchase: real("perc_24k_purchase").default(0.985),
+      perc_24k_exchange: real("perc_24k_exchange").default(0.99),
       perc_22k_sale: real("perc_22k_sale").default(0.92),
       perc_22k_purchase: real("perc_22k_purchase").default(0.9),
+      perc_22k_exchange: real("perc_22k_exchange").default(0.91),
       perc_18k_sale: real("perc_18k_sale").default(0.86),
       perc_18k_purchase: real("perc_18k_purchase").default(0.8),
+      perc_18k_exchange: real("perc_18k_exchange").default(0.85),
       silver_purchase_offset: real("silver_purchase_offset").default(-5e3),
       // purchase = sale + offset
+      silver_exchange_offset: real("silver_exchange_offset").default(-3e3),
+      // exchange = sale + offset
       check_interval_minutes: integer("check_interval_minutes").default(5),
       // auto sync interval
       created_date: timestamp("created_date").defaultNow()
@@ -136,7 +147,7 @@ var init_schema = __esm({
 
 // server/app.ts
 import "dotenv/config";
-import express from "express";
+import express2 from "express";
 import postgres from "postgres";
 
 // server/storage.ts
@@ -151,8 +162,17 @@ var { Pool } = pg;
 var pool = null;
 var db = null;
 var initPromise = null;
-function getDatabaseUrl2() {
-  return process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL;
+var isDbConnected = false;
+function getDatabaseUrl() {
+  const neonDefault = "postgresql://neondb_owner:npg_p9MsbmIFeEq6@ep-ancient-sky-adb87hwt-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require";
+  const rawUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL;
+  if (!rawUrl || rawUrl.includes("192.168.") || rawUrl.includes("10.0.") || rawUrl.includes("127.0.0.1")) {
+    return neonDefault;
+  }
+  return rawUrl;
+}
+function isDbAvailable() {
+  return isDbConnected && Boolean(db);
 }
 async function ensureSchema(client) {
   await client.query(`
@@ -160,13 +180,18 @@ async function ensureSchema(client) {
       id SERIAL PRIMARY KEY,
       gold_24k_sale REAL NOT NULL,
       gold_24k_purchase REAL NOT NULL,
+      gold_24k_exchange REAL DEFAULT 0,
       gold_22k_sale REAL NOT NULL,
       gold_22k_purchase REAL NOT NULL,
+      gold_22k_exchange REAL DEFAULT 0,
       gold_18k_sale REAL NOT NULL,
       gold_18k_purchase REAL NOT NULL,
+      gold_18k_exchange REAL DEFAULT 0,
       silver_per_kg_sale REAL NOT NULL,
       silver_per_kg_purchase REAL NOT NULL,
+      silver_per_kg_exchange REAL DEFAULT 0,
       is_active BOOLEAN DEFAULT true,
+      source TEXT DEFAULT 'api',
       created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -220,155 +245,638 @@ async function ensureSchema(client) {
 
     CREATE TABLE IF NOT EXISTS rate_settings (
       id SERIAL PRIMARY KEY,
+      external_rates_url TEXT DEFAULT 'https://www.businessmantra.info/gold_rates/devi_gold_rate/api.php',
       perc_24k_purchase REAL DEFAULT 0.985,
+      perc_24k_exchange REAL DEFAULT 0.99,
       perc_22k_sale REAL DEFAULT 0.92,
       perc_22k_purchase REAL DEFAULT 0.90,
+      perc_22k_exchange REAL DEFAULT 0.91,
       perc_18k_sale REAL DEFAULT 0.86,
       perc_18k_purchase REAL DEFAULT 0.80,
+      perc_18k_exchange REAL DEFAULT 0.85,
       silver_purchase_offset REAL DEFAULT -5000,
+      silver_exchange_offset REAL DEFAULT -3000,
       check_interval_minutes INTEGER DEFAULT 5,
       created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+
+    ALTER TABLE gold_rates ADD COLUMN IF NOT EXISTS gold_24k_exchange REAL DEFAULT 0;
+    ALTER TABLE rate_settings ADD COLUMN IF NOT EXISTS perc_24k_exchange REAL DEFAULT 0.99;
+    ALTER TABLE rate_settings ADD COLUMN IF NOT EXISTS external_rates_url TEXT DEFAULT 'https://www.businessmantra.info/gold_rates/devi_gold_rate/api.php';
   `);
 }
 function init() {
   if (db && initPromise) return;
-  const connectionString = getDatabaseUrl2();
+  const connectionString = getDatabaseUrl();
   if (!connectionString) {
-    throw new Error("Database URL not set. Set DATABASE_URL (or POSTGRES_URL / POSTGRES_PRISMA_URL).");
+    console.warn("[AI Studio] DATABASE_URL not set \u2014 using in-memory storage fallback");
+    isDbConnected = false;
+    return;
   }
-  pool = new Pool({ connectionString });
-  initPromise = ensureSchema(pool);
-  db = drizzle({ client: pool, schema: schema_exports });
+  try {
+    const isRemoteDb = Boolean(
+      process.env.VERCEL || connectionString.includes("sslmode=") || connectionString.includes("neon.tech") || connectionString.includes("supabase.co") || connectionString.includes("render.com") || connectionString.includes("aws.com")
+    );
+    pool = new Pool({
+      connectionString,
+      connectionTimeoutMillis: 5e3,
+      ...isRemoteDb ? { ssl: { rejectUnauthorized: false } } : {}
+    });
+    pool.on("error", (err) => {
+      isDbConnected = false;
+      db = null;
+    });
+    initPromise = ensureSchema(pool).then(() => {
+      isDbConnected = true;
+    }).catch(async (err) => {
+      console.error("[AI Studio] Database connection error:", err);
+      isDbConnected = false;
+      db = null;
+      if (pool) {
+        try {
+          await pool.end();
+        } catch {
+        }
+        pool = null;
+      }
+    });
+    db = drizzle({ client: pool, schema: schema_exports });
+  } catch (err) {
+    console.log("[AI Studio] Database notice: Postgres unavailable, active in-memory storage.");
+    isDbConnected = false;
+    db = null;
+    if (pool) {
+      try {
+        pool.end();
+      } catch {
+      }
+      pool = null;
+    }
+  }
 }
 function getDb() {
-  if (db) return db;
   init();
-  return db;
+  return isDbConnected ? db : null;
 }
 async function ensureDbReady() {
   init();
-  await initPromise;
+  if (initPromise) {
+    try {
+      await initPromise;
+    } catch {
+      isDbConnected = false;
+    }
+  }
 }
 
 // server/storage.ts
-var PostgresStorage = class {
-  // Gold Rates
+function roundTo10(val) {
+  if (val === void 0 || val === null || isNaN(val)) return 0;
+  return Math.round(val / 10) * 10;
+}
+function processRateData(rate) {
+  const processed = { ...rate };
+  if (processed.gold_24k_sale !== void 0) processed.gold_24k_sale = roundTo10(processed.gold_24k_sale);
+  if (processed.gold_24k_purchase !== void 0) processed.gold_24k_purchase = roundTo10(processed.gold_24k_purchase);
+  if (processed.gold_24k_exchange !== void 0) processed.gold_24k_exchange = roundTo10(processed.gold_24k_exchange);
+  if (processed.gold_22k_sale !== void 0) processed.gold_22k_sale = roundTo10(processed.gold_22k_sale);
+  if (processed.gold_22k_purchase !== void 0) processed.gold_22k_purchase = roundTo10(processed.gold_22k_purchase);
+  if (processed.gold_22k_exchange !== void 0) processed.gold_22k_exchange = roundTo10(processed.gold_22k_exchange);
+  if (processed.gold_18k_sale !== void 0) processed.gold_18k_sale = roundTo10(processed.gold_18k_sale);
+  if (processed.gold_18k_purchase !== void 0) processed.gold_18k_purchase = roundTo10(processed.gold_18k_purchase);
+  if (processed.gold_18k_exchange !== void 0) processed.gold_18k_exchange = roundTo10(processed.gold_18k_exchange);
+  if (processed.silver_per_kg_sale !== void 0) processed.silver_per_kg_sale = roundTo10(processed.silver_per_kg_sale);
+  if (processed.silver_per_kg_purchase !== void 0) processed.silver_per_kg_purchase = roundTo10(processed.silver_per_kg_purchase);
+  if (processed.silver_per_kg_exchange !== void 0) processed.silver_per_kg_exchange = roundTo10(processed.silver_per_kg_exchange);
+  return processed;
+}
+var MemStorage = class {
+  goldRatesList = [];
+  displaySettingsData;
+  rateSettingsData;
+  mediaItemsList = [];
+  promoImagesList = [];
+  bannerSettingsData;
+  nextId = { rates: 1, display: 1, rateSettings: 1, media: 1, promo: 1, banner: 1 };
+  constructor() {
+    this.goldRatesList.push({
+      id: this.nextId.rates++,
+      gold_24k_sale: 151e3,
+      gold_24k_purchase: 148740,
+      gold_24k_exchange: 149490,
+      gold_22k_sale: 138920,
+      gold_22k_purchase: 135900,
+      gold_22k_exchange: 137410,
+      gold_18k_sale: 129860,
+      gold_18k_purchase: 120800,
+      gold_18k_exchange: 128350,
+      silver_per_kg_sale: 235e3,
+      silver_per_kg_purchase: 23e4,
+      silver_per_kg_exchange: 232e3,
+      is_active: true,
+      source: "default",
+      created_date: /* @__PURE__ */ new Date()
+    });
+    this.displaySettingsData = {
+      id: this.nextId.display++,
+      orientation: "horizontal",
+      background_color: "#FFF8E1",
+      text_color: "#212529",
+      rate_number_font_size: "text-4xl",
+      show_media: true,
+      rates_display_duration_seconds: 15,
+      refresh_interval: 30,
+      created_date: /* @__PURE__ */ new Date()
+    };
+    this.rateSettingsData = {
+      id: this.nextId.rateSettings++,
+      external_rates_url: "https://www.businessmantra.info/gold_rates/devi_gold_rate/api.php",
+      perc_24k_purchase: 0.985,
+      perc_24k_exchange: 0.99,
+      perc_22k_sale: 0.92,
+      perc_22k_purchase: 0.9,
+      perc_22k_exchange: 0.91,
+      perc_18k_sale: 0.86,
+      perc_18k_purchase: 0.8,
+      perc_18k_exchange: 0.85,
+      silver_purchase_offset: -5e3,
+      silver_exchange_offset: -3e3,
+      check_interval_minutes: 5,
+      created_date: /* @__PURE__ */ new Date()
+    };
+    this.bannerSettingsData = {
+      id: this.nextId.banner++,
+      banner_image_url: null,
+      banner_image_data: null,
+      banner_height: 120,
+      is_active: true,
+      created_date: /* @__PURE__ */ new Date()
+    };
+  }
   async getCurrentRates() {
-    await ensureDbReady();
-    const rates = await getDb().select().from(goldRates).where(eq(goldRates.is_active, true)).orderBy(desc(goldRates.created_date)).limit(1);
-    return rates[0];
+    const active = this.goldRatesList.filter((r) => r.is_active);
+    return active[active.length - 1] || this.goldRatesList[this.goldRatesList.length - 1];
   }
   async createGoldRate(rate) {
-    await ensureDbReady();
-    const db2 = getDb();
-    await db2.update(goldRates).set({ is_active: false });
-    const result = await db2.insert(goldRates).values(rate).returning();
-    return result[0];
+    const processedRate = processRateData(rate);
+    const activeRates = this.goldRatesList.filter((r) => r.is_active);
+    const lastRate = activeRates[activeRates.length - 1] || this.goldRatesList[this.goldRatesList.length - 1];
+    if (lastRate) {
+      const rateFields = [
+        "gold_24k_sale",
+        "gold_24k_purchase",
+        "gold_24k_exchange",
+        "gold_22k_sale",
+        "gold_22k_purchase",
+        "gold_22k_exchange",
+        "gold_18k_sale",
+        "gold_18k_purchase",
+        "gold_18k_exchange",
+        "silver_per_kg_sale",
+        "silver_per_kg_purchase",
+        "silver_per_kg_exchange"
+      ];
+      let hasChanges = false;
+      for (const field of rateFields) {
+        const lastVal = Number(lastRate[field]);
+        const newVal = Number(processedRate[field]);
+        if (lastVal !== newVal) {
+          hasChanges = true;
+          break;
+        }
+      }
+      if (!hasChanges) {
+        return lastRate;
+      }
+    }
+    for (const r of this.goldRatesList) {
+      r.is_active = false;
+    }
+    const newRate = {
+      id: this.nextId.rates++,
+      gold_24k_sale: processedRate.gold_24k_sale,
+      gold_24k_purchase: processedRate.gold_24k_purchase,
+      gold_24k_exchange: processedRate.gold_24k_exchange ?? 0,
+      gold_22k_sale: processedRate.gold_22k_sale,
+      gold_22k_purchase: processedRate.gold_22k_purchase,
+      gold_22k_exchange: processedRate.gold_22k_exchange ?? 0,
+      gold_18k_sale: processedRate.gold_18k_sale,
+      gold_18k_purchase: processedRate.gold_18k_purchase,
+      gold_18k_exchange: processedRate.gold_18k_exchange ?? 0,
+      silver_per_kg_sale: processedRate.silver_per_kg_sale,
+      silver_per_kg_purchase: processedRate.silver_per_kg_purchase,
+      silver_per_kg_exchange: processedRate.silver_per_kg_exchange ?? 0,
+      is_active: true,
+      source: processedRate.source ?? "api",
+      created_date: /* @__PURE__ */ new Date()
+    };
+    this.goldRatesList.push(newRate);
+    return newRate;
   }
   async updateGoldRate(id, rate) {
-    await ensureDbReady();
-    const result = await getDb().update(goldRates).set(rate).where(eq(goldRates.id, id)).returning();
-    return result[0];
-  }
-  // Display Settings
-  // In storage.ts - add this method
-  // Add to IStorage interface
-  // Add to PostgresStorage class
-  async createDisplaySettings(settings) {
-    await ensureDbReady();
-    const result = await getDb().insert(displaySettings).values(settings).returning();
-    return result[0];
+    const processedRate = processRateData(rate);
+    const item = this.goldRatesList.find((r) => r.id === id);
+    if (!item) return void 0;
+    Object.assign(item, processedRate);
+    return item;
   }
   async getDisplaySettings() {
-    await ensureDbReady();
-    const settings = await getDb().select().from(displaySettings).orderBy(desc(displaySettings.created_date)).limit(1);
-    return settings[0];
+    return this.displaySettingsData;
+  }
+  async createDisplaySettings(settings) {
+    const newSettings = {
+      id: this.nextId.display++,
+      orientation: settings.orientation ?? "horizontal",
+      background_color: settings.background_color ?? "#FFF8E1",
+      text_color: settings.text_color ?? "#212529",
+      rate_number_font_size: settings.rate_number_font_size ?? "text-4xl",
+      show_media: settings.show_media ?? true,
+      rates_display_duration_seconds: settings.rates_display_duration_seconds ?? 15,
+      refresh_interval: settings.refresh_interval ?? 30,
+      created_date: /* @__PURE__ */ new Date()
+    };
+    this.displaySettingsData = newSettings;
+    return newSettings;
   }
   async updateDisplaySettings(id, settings) {
+    if (!this.displaySettingsData) {
+      return this.createDisplaySettings(settings);
+    }
+    Object.assign(this.displaySettingsData, settings);
+    return this.displaySettingsData;
+  }
+  async getRateSettings() {
+    return this.rateSettingsData;
+  }
+  async createRateSettings(settings) {
+    const newSettings = {
+      id: this.nextId.rateSettings++,
+      external_rates_url: settings.external_rates_url ?? "https://www.businessmantra.info/gold_rates/devi_gold_rate/api.php",
+      perc_24k_purchase: settings.perc_24k_purchase ?? 0.985,
+      perc_24k_exchange: settings.perc_24k_exchange ?? 0.99,
+      perc_22k_sale: settings.perc_22k_sale ?? 0.92,
+      perc_22k_purchase: settings.perc_22k_purchase ?? 0.9,
+      perc_22k_exchange: settings.perc_22k_exchange ?? 0.91,
+      perc_18k_sale: settings.perc_18k_sale ?? 0.86,
+      perc_18k_purchase: settings.perc_18k_purchase ?? 0.8,
+      perc_18k_exchange: settings.perc_18k_exchange ?? 0.85,
+      silver_purchase_offset: settings.silver_purchase_offset ?? -5e3,
+      silver_exchange_offset: settings.silver_exchange_offset ?? -3e3,
+      check_interval_minutes: settings.check_interval_minutes ?? 5,
+      created_date: /* @__PURE__ */ new Date()
+    };
+    this.rateSettingsData = newSettings;
+    return newSettings;
+  }
+  async updateRateSettings(id, settings) {
+    if (!this.rateSettingsData) {
+      return this.createRateSettings(settings);
+    }
+    Object.assign(this.rateSettingsData, settings);
+    return this.rateSettingsData;
+  }
+  async getMediaItems(activeOnly = false) {
+    if (activeOnly) {
+      return this.mediaItemsList.filter((m) => m.is_active);
+    }
+    return this.mediaItemsList;
+  }
+  async createMediaItem(item) {
+    const newItem = {
+      id: this.nextId.media++,
+      name: item.name,
+      file_url: item.file_url ?? null,
+      file_data: item.file_data ?? null,
+      media_type: item.media_type,
+      duration_seconds: item.duration_seconds ?? 30,
+      order_index: item.order_index ?? 0,
+      is_active: item.is_active ?? true,
+      file_size: item.file_size ?? null,
+      mime_type: item.mime_type ?? null,
+      created_date: /* @__PURE__ */ new Date()
+    };
+    this.mediaItemsList.push(newItem);
+    return newItem;
+  }
+  async updateMediaItem(id, item) {
+    const existing = this.mediaItemsList.find((m) => m.id === id);
+    if (!existing) return void 0;
+    Object.assign(existing, item);
+    return existing;
+  }
+  async deleteMediaItem(id) {
+    const index = this.mediaItemsList.findIndex((m) => m.id === id);
+    if (index === -1) return false;
+    this.mediaItemsList.splice(index, 1);
+    return true;
+  }
+  async getPromoImages(activeOnly = false) {
+    if (activeOnly) {
+      return this.promoImagesList.filter((p) => p.is_active);
+    }
+    return this.promoImagesList;
+  }
+  async createPromoImage(image) {
+    const newPromo = {
+      id: this.nextId.promo++,
+      name: image.name,
+      image_url: image.image_url ?? null,
+      image_data: image.image_data ?? null,
+      duration_seconds: image.duration_seconds ?? 5,
+      transition_effect: image.transition_effect ?? "fade",
+      order_index: image.order_index ?? 0,
+      is_active: image.is_active ?? true,
+      file_size: image.file_size ?? null,
+      created_date: /* @__PURE__ */ new Date()
+    };
+    this.promoImagesList.push(newPromo);
+    return newPromo;
+  }
+  async updatePromoImage(id, image) {
+    const existing = this.promoImagesList.find((p) => p.id === id);
+    if (!existing) return void 0;
+    Object.assign(existing, image);
+    return existing;
+  }
+  async deletePromoImage(id) {
+    const index = this.promoImagesList.findIndex((p) => p.id === id);
+    if (index === -1) return false;
+    this.promoImagesList.splice(index, 1);
+    return true;
+  }
+  async getBannerSettings() {
+    return this.bannerSettingsData;
+  }
+  async createBannerSettings(banner) {
+    const newBanner = {
+      id: this.nextId.banner++,
+      banner_image_url: banner.banner_image_url ?? null,
+      banner_image_data: banner.banner_image_data ?? null,
+      banner_height: banner.banner_height ?? 120,
+      is_active: banner.is_active ?? true,
+      created_date: /* @__PURE__ */ new Date()
+    };
+    this.bannerSettingsData = newBanner;
+    return newBanner;
+  }
+  async updateBannerSettings(id, banner) {
+    if (!this.bannerSettingsData) {
+      return this.createBannerSettings(banner);
+    }
+    Object.assign(this.bannerSettingsData, banner);
+    return this.bannerSettingsData;
+  }
+};
+var PostgresStorage = class {
+  memFallback = new MemStorage();
+  async useDb() {
     await ensureDbReady();
-    const result = await getDb().update(displaySettings).set(settings).where(eq(displaySettings.id, id)).returning();
-    return result[0];
+    const db2 = getDb();
+    if (!db2 || !isDbAvailable()) return null;
+    return db2;
+  }
+  // Gold Rates
+  async getCurrentRates() {
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.getCurrentRates();
+      const rates = await db2.select().from(goldRates).where(eq(goldRates.is_active, true)).orderBy(desc(goldRates.created_date)).limit(1);
+      return rates[0] || this.memFallback.getCurrentRates();
+    } catch {
+      return this.memFallback.getCurrentRates();
+    }
+  }
+  async createGoldRate(rate) {
+    const processedRate = processRateData(rate);
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.createGoldRate(processedRate);
+      const currentRates = await db2.select().from(goldRates).where(eq(goldRates.is_active, true)).orderBy(desc(goldRates.created_date)).limit(1);
+      if (currentRates.length > 0) {
+        const lastRate = currentRates[0];
+        const rateFields = [
+          "gold_24k_sale",
+          "gold_24k_purchase",
+          "gold_24k_exchange",
+          "gold_22k_sale",
+          "gold_22k_purchase",
+          "gold_22k_exchange",
+          "gold_18k_sale",
+          "gold_18k_purchase",
+          "gold_18k_exchange",
+          "silver_per_kg_sale",
+          "silver_per_kg_purchase",
+          "silver_per_kg_exchange"
+        ];
+        let hasChanges = false;
+        for (const field of rateFields) {
+          const lastValue = Number(lastRate[field]);
+          const newValue = Number(processedRate[field]);
+          if (lastValue !== newValue) {
+            hasChanges = true;
+            break;
+          }
+        }
+        if (!hasChanges) {
+          return lastRate;
+        }
+      }
+      await db2.update(goldRates).set({ is_active: false });
+      const result = await db2.insert(goldRates).values(processedRate).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.createGoldRate(processedRate);
+    }
+  }
+  async updateGoldRate(id, rate) {
+    const processedRate = processRateData(rate);
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.updateGoldRate(id, processedRate);
+      const result = await db2.update(goldRates).set(processedRate).where(eq(goldRates.id, id)).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.updateGoldRate(id, processedRate);
+    }
+  }
+  // Display Settings
+  async createDisplaySettings(settings) {
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.createDisplaySettings(settings);
+      const result = await db2.insert(displaySettings).values(settings).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.createDisplaySettings(settings);
+    }
+  }
+  async getDisplaySettings() {
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.getDisplaySettings();
+      const settings = await db2.select().from(displaySettings).orderBy(desc(displaySettings.created_date)).limit(1);
+      return settings[0] || this.memFallback.getDisplaySettings();
+    } catch {
+      return this.memFallback.getDisplaySettings();
+    }
+  }
+  async updateDisplaySettings(id, settings) {
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.updateDisplaySettings(id, settings);
+      const result = await db2.update(displaySettings).set(settings).where(eq(displaySettings.id, id)).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.updateDisplaySettings(id, settings);
+    }
   }
   // Rate Calculation Settings
   async getRateSettings() {
-    await ensureDbReady();
-    const settings = await getDb().select().from(rateSettings).orderBy(desc(rateSettings.created_date)).limit(1);
-    return settings[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.getRateSettings();
+      const settings = await db2.select().from(rateSettings).orderBy(desc(rateSettings.created_date)).limit(1);
+      return settings[0] || this.memFallback.getRateSettings();
+    } catch {
+      return this.memFallback.getRateSettings();
+    }
   }
   async createRateSettings(settings) {
-    await ensureDbReady();
-    const result = await getDb().insert(rateSettings).values(settings).returning();
-    return result[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.createRateSettings(settings);
+      const result = await db2.insert(rateSettings).values(settings).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.createRateSettings(settings);
+    }
   }
   async updateRateSettings(id, settings) {
-    await ensureDbReady();
-    const result = await getDb().update(rateSettings).set(settings).where(eq(rateSettings.id, id)).returning();
-    return result[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.updateRateSettings(id, settings);
+      const result = await db2.update(rateSettings).set(settings).where(eq(rateSettings.id, id)).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.updateRateSettings(id, settings);
+    }
   }
   // Media Items
   async getMediaItems(activeOnly = false) {
-    await ensureDbReady();
-    const db2 = getDb();
-    if (activeOnly) {
-      return await db2.select().from(mediaItems).where(eq(mediaItems.is_active, true)).orderBy(asc(mediaItems.order_index));
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.getMediaItems(activeOnly);
+      if (activeOnly) {
+        return await db2.select().from(mediaItems).where(eq(mediaItems.is_active, true)).orderBy(asc(mediaItems.order_index));
+      }
+      return await db2.select().from(mediaItems).orderBy(asc(mediaItems.order_index));
+    } catch {
+      return this.memFallback.getMediaItems(activeOnly);
     }
-    return await db2.select().from(mediaItems).orderBy(asc(mediaItems.order_index));
   }
   async createMediaItem(item) {
-    await ensureDbReady();
-    const result = await getDb().insert(mediaItems).values(item).returning();
-    return result[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.createMediaItem(item);
+      const result = await db2.insert(mediaItems).values(item).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.createMediaItem(item);
+    }
   }
   async updateMediaItem(id, item) {
-    await ensureDbReady();
-    const result = await getDb().update(mediaItems).set(item).where(eq(mediaItems.id, id)).returning();
-    return result[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.updateMediaItem(id, item);
+      const result = await db2.update(mediaItems).set(item).where(eq(mediaItems.id, id)).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.updateMediaItem(id, item);
+    }
   }
   async deleteMediaItem(id) {
-    await ensureDbReady();
-    const result = await getDb().delete(mediaItems).where(eq(mediaItems.id, id)).returning();
-    return result.length > 0;
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.deleteMediaItem(id);
+      const result = await db2.delete(mediaItems).where(eq(mediaItems.id, id)).returning();
+      return result.length > 0;
+    } catch {
+      return this.memFallback.deleteMediaItem(id);
+    }
   }
   // Promo Images
   async getPromoImages(activeOnly = false) {
-    await ensureDbReady();
-    const db2 = getDb();
-    if (activeOnly) {
-      return await db2.select().from(promoImages).where(eq(promoImages.is_active, true)).orderBy(asc(promoImages.order_index));
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.getPromoImages(activeOnly);
+      if (activeOnly) {
+        return await db2.select().from(promoImages).where(eq(promoImages.is_active, true)).orderBy(asc(promoImages.order_index));
+      }
+      return await db2.select().from(promoImages).orderBy(asc(promoImages.order_index));
+    } catch {
+      return this.memFallback.getPromoImages(activeOnly);
     }
-    return await db2.select().from(promoImages).orderBy(asc(promoImages.order_index));
   }
   async createPromoImage(image) {
-    await ensureDbReady();
-    const result = await getDb().insert(promoImages).values(image).returning();
-    return result[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.createPromoImage(image);
+      const result = await db2.insert(promoImages).values(image).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.createPromoImage(image);
+    }
   }
   async updatePromoImage(id, image) {
-    await ensureDbReady();
-    const result = await getDb().update(promoImages).set(image).where(eq(promoImages.id, id)).returning();
-    return result[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.updatePromoImage(id, image);
+      const result = await db2.update(promoImages).set(image).where(eq(promoImages.id, id)).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.updatePromoImage(id, image);
+    }
   }
   async deletePromoImage(id) {
-    await ensureDbReady();
-    const result = await getDb().delete(promoImages).where(eq(promoImages.id, id)).returning();
-    return result.length > 0;
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.deletePromoImage(id);
+      const result = await db2.delete(promoImages).where(eq(promoImages.id, id)).returning();
+      return result.length > 0;
+    } catch {
+      return this.memFallback.deletePromoImage(id);
+    }
   }
   // Banner Settings
   async getBannerSettings() {
-    await ensureDbReady();
-    const banner = await getDb().select().from(bannerSettings).where(eq(bannerSettings.is_active, true)).orderBy(desc(bannerSettings.created_date)).limit(1);
-    return banner[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.getBannerSettings();
+      const banner = await db2.select().from(bannerSettings).where(eq(bannerSettings.is_active, true)).orderBy(desc(bannerSettings.created_date)).limit(1);
+      return banner[0] || this.memFallback.getBannerSettings();
+    } catch {
+      return this.memFallback.getBannerSettings();
+    }
   }
   async createBannerSettings(banner) {
-    await ensureDbReady();
-    const result = await getDb().insert(bannerSettings).values(banner).returning();
-    return result[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.createBannerSettings(banner);
+      const result = await db2.insert(bannerSettings).values(banner).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.createBannerSettings(banner);
+    }
   }
   async updateBannerSettings(id, banner) {
-    await ensureDbReady();
-    const result = await getDb().update(bannerSettings).set(banner).where(eq(bannerSettings.id, id)).returning();
-    return result[0];
+    try {
+      const db2 = await this.useDb();
+      if (!db2) return this.memFallback.updateBannerSettings(id, banner);
+      const result = await db2.update(bannerSettings).set(banner).where(eq(bannerSettings.id, id)).returning();
+      return result[0];
+    } catch {
+      return this.memFallback.updateBannerSettings(id, banner);
+    }
   }
 };
 var storage = new PostgresStorage();
@@ -390,104 +898,205 @@ function getCurrentRatesFilePath() {
   return new URL("../currentrates.txt", import.meta.url);
 }
 async function writeCurrentRatesToFile(rates) {
-  const lines = [
-    `gold_24k_sale=${rates.gold_24k_sale}`,
-    `gold_24k_purchase=${rates.gold_24k_purchase}`,
-    `gold_22k_sale=${rates.gold_22k_sale}`,
-    `gold_22k_purchase=${rates.gold_22k_purchase}`,
-    `gold_18k_sale=${rates.gold_18k_sale}`,
-    `gold_18k_purchase=${rates.gold_18k_purchase}`,
-    `silver_per_kg_sale=${rates.silver_per_kg_sale}`,
-    `silver_per_kg_purchase=${rates.silver_per_kg_purchase}`,
-    `is_active=${rates.is_active}`,
-    `created_date=${rates.created_date instanceof Date ? rates.created_date.toISOString() : new Date(rates.created_date).toISOString()}`
-  ];
-  await writeFile(getCurrentRatesFilePath(), `${lines.join("\n")}
+  try {
+    const lines = [
+      `gold_24k_sale=${rates.gold_24k_sale}`,
+      `gold_24k_purchase=${rates.gold_24k_purchase}`,
+      `gold_24k_exchange=${rates.gold_24k_exchange}`,
+      `gold_22k_sale=${rates.gold_22k_sale}`,
+      `gold_22k_purchase=${rates.gold_22k_purchase}`,
+      `gold_22k_exchange=${rates.gold_22k_exchange}`,
+      `gold_18k_sale=${rates.gold_18k_sale}`,
+      `gold_18k_purchase=${rates.gold_18k_purchase}`,
+      `gold_18k_exchange=${rates.gold_18k_exchange}`,
+      `silver_per_kg_sale=${rates.silver_per_kg_sale}`,
+      `silver_per_kg_purchase=${rates.silver_per_kg_purchase}`,
+      `silver_per_kg_exchange=${rates.silver_per_kg_exchange}`,
+      `is_active=${rates.is_active}`,
+      `created_date=${rates.created_date instanceof Date ? rates.created_date.toISOString() : new Date(rates.created_date).toISOString()}`
+    ];
+    await writeFile(getCurrentRatesFilePath(), `${lines.join("\n")}
 `, "utf8");
+  } catch (err) {
+    console.warn("Notice: currentrates.txt write skipped (read-only filesystem or serverless context):", err);
+  }
 }
 
 // server/ratesSync.ts
+var parseNumberVal = z.union([z.number(), z.string()]).transform((val) => {
+  if (val === null || val === void 0) return null;
+  if (typeof val === "number") return val;
+  const clean = String(val).replace(/,/g, "").trim();
+  const num = Number(clean);
+  return isNaN(num) ? null : num;
+}).nullable().optional();
 var externalRatesSchema = z.object({
-  "24K Gold": z.coerce.number().positive().nullable(),
-  "22K Gold": z.coerce.number().positive().nullable(),
-  "18K Gold": z.coerce.number().positive().nullable(),
-  "Silver": z.coerce.number().positive().nullable()
-});
+  "24K Gold": parseNumberVal,
+  "22K Gold": parseNumberVal,
+  "18K Gold": parseNumberVal,
+  "Silver": parseNumberVal
+}).passthrough();
+var lastSyncAttemptTime = 0;
+var syncLogBuffer = [];
+function addSyncLog(message, type = "info", details) {
+  const entry = {
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    type,
+    message,
+    details
+  };
+  syncLogBuffer.unshift(entry);
+  if (syncLogBuffer.length > 50) syncLogBuffer.pop();
+  console.log(`[Auto-Sync ${entry.timestamp}] [${type.toUpperCase()}] ${message}`);
+}
+function getSyncLogs() {
+  return syncLogBuffer;
+}
+function getSyncStatus(intervalMinutes = 5) {
+  const now = Date.now();
+  const timeSinceLastSync = lastSyncAttemptTime > 0 ? now - lastSyncAttemptTime : null;
+  const intervalMs = intervalMinutes * 60 * 1e3;
+  const nextSyncInMs = lastSyncAttemptTime > 0 ? Math.max(0, intervalMs - timeSinceLastSync) : 0;
+  return {
+    lastSyncAttemptTime: lastSyncAttemptTime > 0 ? new Date(lastSyncAttemptTime).toISOString() : null,
+    secondsSinceLastSync: timeSinceLastSync ? Math.round(timeSinceLastSync / 1e3) : null,
+    nextSyncInSeconds: Math.round(nextSyncInMs / 1e3),
+    intervalMinutes,
+    totalLogsRecorded: syncLogBuffer.length,
+    latestLog: syncLogBuffer[0] || null
+  };
+}
 function roundRate(value) {
-  const result = Math.ceil(value / 10) * 10;
+  const result = Math.round(value / 10) * 10;
   if (!Number.isFinite(result)) return value;
-  console.log(`Rounding: ${value} -> ${result}`);
   return result;
 }
-function calculateAllRates(gold24Sale, silverSale, settings) {
+function calculateAllRates(gold24Sale, silverSale, settings, raw22kSale, raw18kSale) {
   const perc24Purchase = settings?.perc_24k_purchase ?? 0.985;
+  const perc24Exchange = settings?.perc_24k_exchange ?? 0.99;
   const perc22Sale = settings?.perc_22k_sale ?? 0.92;
   const perc22Purchase = settings?.perc_22k_purchase ?? 0.9;
+  const perc22Exchange = settings?.perc_22k_exchange ?? 0.91;
   const perc18Sale = settings?.perc_18k_sale ?? 0.86;
-  const perc18Purchase = settings?.perc_18k_purchase ?? 0.75;
+  const perc18Purchase = settings?.perc_18k_purchase ?? 0.8;
+  const perc18Exchange = settings?.perc_18k_exchange ?? 0.85;
   const silverPurchaseOffset = settings?.silver_purchase_offset ?? -5e3;
+  const silverExchangeOffset = settings?.silver_exchange_offset ?? -3e3;
+  const gold22Sale = raw22kSale && raw22kSale > 0 ? roundRate(raw22kSale) : roundRate(gold24Sale * perc22Sale);
+  const gold18Sale = raw18kSale && raw18kSale > 0 ? roundRate(raw18kSale) : roundRate(gold24Sale * perc18Sale);
   const result = {
     gold_24k_sale: gold24Sale,
     gold_24k_purchase: roundRate(gold24Sale * perc24Purchase),
-    gold_22k_sale: roundRate(gold24Sale * perc22Sale),
+    gold_24k_exchange: roundRate(gold24Sale * perc24Exchange),
+    gold_22k_sale: gold22Sale,
     gold_22k_purchase: roundRate(gold24Sale * perc22Purchase),
-    gold_18k_sale: roundRate(gold24Sale * perc18Sale),
+    gold_22k_exchange: roundRate(gold24Sale * perc22Exchange),
+    gold_18k_sale: gold18Sale,
     gold_18k_purchase: roundRate(gold24Sale * perc18Purchase),
+    gold_18k_exchange: roundRate(gold24Sale * perc18Exchange),
     silver_per_kg_sale: silverSale,
-    silver_per_kg_purchase: roundRate(silverSale + silverPurchaseOffset)
+    silver_per_kg_purchase: roundRate(silverSale + silverPurchaseOffset),
+    silver_per_kg_exchange: roundRate(silverSale + silverExchangeOffset)
   };
   console.log("Calculated rates:", JSON.stringify(result));
   return result;
 }
 async function syncRatesFromExternal(storage2, opts) {
   const settings = await storage2.getRateSettings();
-  const intervalMinutes = settings?.check_interval_minutes ?? 1;
+  const intervalMinutes = settings?.check_interval_minutes ?? 5;
+  const intervalMs = intervalMinutes * 60 * 1e3;
   const current = await storage2.getCurrentRates();
-  if (!opts.force && current?.created_date) {
-    const last = current.created_date instanceof Date ? current.created_date : new Date(current.created_date);
-    const dueAt = last.getTime() + intervalMinutes * 60 * 1e3;
-    if (Date.now() < dueAt) return current;
-  }
-  const url = process.env.EXTERNAL_RATES_URL;
-  if (!url) {
-    throw new Error("EXTERNAL_RATES_URL is not set");
-  }
-  const response = await fetch(url, { headers: { "accept": "application/json" } });
-  if (!response.ok) {
-    throw new Error(`External rates fetch failed (${response.status})`);
-  }
-  const payload = externalRatesSchema.parse(await response.json());
-  const gold24Sale = payload["24K Gold"] ? roundRate(payload["24K Gold"]) : null;
-  const gold22Sale = payload["22K Gold"] ? roundRate(payload["22K Gold"]) : null;
-  const gold18Sale = payload["18K Gold"] ? roundRate(payload["18K Gold"]) : null;
-  const silverSale = payload["Silver"] ? roundRate(payload["Silver"]) : null;
-  if (!gold24Sale || !silverSale) {
-    throw new Error("Invalid response: missing 24K Gold or Silver values");
-  }
-  const rawGold24 = payload["24K Gold"];
-  const rawSilver = payload["Silver"];
-  if (current && !opts.force) {
-    const storedGold24 = current.gold_24k_sale;
-    const storedSilver = current.silver_per_kg_sale;
-    const normStoredSilver = storedSilver >= 1e4 ? storedSilver / 100 : storedSilver;
-    const normRawSilver = rawSilver >= 1e4 ? rawSilver / 100 : rawSilver;
-    if (storedGold24 === rawGold24 && normStoredSilver === normRawSilver) {
-      console.log("Rates unchanged (source API values same), skipping database update");
+  const now = Date.now();
+  if (!opts.force && current && current.source !== "default") {
+    const elapsed = now - lastSyncAttemptTime;
+    if (elapsed < intervalMs) {
+      const remainingSec = Math.round((intervalMs - elapsed) / 1e3);
+      addSyncLog(`Within ${intervalMinutes}-minute sync interval (${remainingSec}s remaining). Returning active database rates.`, "skip", {
+        remainingSec,
+        currentRatesId: current.id,
+        gold_24k_sale: current.gold_24k_sale
+      });
       return current;
     }
   }
-  const newRates = calculateAllRates(gold24Sale, silverSale, settings);
-  console.log("Creating gold rate in database:", JSON.stringify(newRates));
+  lastSyncAttemptTime = now;
+  const defaultUrl = "https://www.businessmantra.info/gold_rates/devi_gold_rate/api.php";
+  const url = settings?.external_rates_url || process.env.EXTERNAL_RATES_URL || defaultUrl;
+  addSyncLog(`Interval due or force requested. Fetching external rates from ${url}`, "info");
+  let response;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1e4);
+    response = await fetch(url, {
+      headers: {
+        "accept": "application/json, text/plain, */*",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+  } catch (err) {
+    const errMsg = `Unable to reach external rates URL (${url}): ${err?.message || err}`;
+    addSyncLog(errMsg, "error");
+    if (current) return current;
+    throw new Error(errMsg);
+  }
+  if (!response.ok) {
+    const errMsg = `External rates URL returned HTTP status ${response.status}`;
+    addSyncLog(errMsg, "error");
+    if (current) return current;
+    throw new Error(errMsg);
+  }
+  const rawText = await response.text();
+  let parsedJson;
+  try {
+    parsedJson = JSON.parse(rawText);
+  } catch (e) {
+    const errMsg = `Failed to parse external API JSON: ${rawText.slice(0, 100)}`;
+    addSyncLog(errMsg, "error");
+    if (current) return current;
+    throw new Error("Invalid JSON received from external rates API");
+  }
+  const payload = externalRatesSchema.parse(parsedJson);
+  const gold24Raw = payload["24K Gold"];
+  const gold22Raw = payload["22K Gold"];
+  const gold18Raw = payload["18K Gold"];
+  const silverRaw = payload["Silver"];
+  const gold24Sale = gold24Raw ? roundRate(gold24Raw) : null;
+  const gold22Sale = gold22Raw ? roundRate(gold22Raw) : null;
+  const gold18Sale = gold18Raw ? roundRate(gold18Raw) : null;
+  const silverSale = silverRaw ? roundRate(silverRaw < 1e4 ? silverRaw * 100 : silverRaw) : null;
+  if (!gold24Sale || !silverSale) {
+    const errMsg = "Missing 24K Gold or Silver in API response payload";
+    addSyncLog(errMsg, "error", payload);
+    if (current) {
+      return current;
+    }
+    throw new Error("Invalid response from external API: missing 24K Gold or Silver rates");
+  }
+  const newRates = calculateAllRates(gold24Sale, silverSale, settings, gold22Sale, gold18Sale);
   const created = await storage2.createGoldRate({
     ...newRates,
-    is_active: true
+    is_active: true,
+    source: "api"
   });
-  console.log("Created gold rate with ID:", created.id);
+  if (current && created.id === current.id) {
+    addSyncLog(`Fetched external rates (24K: \u20B9${newRates.gold_24k_sale}, 22K: \u20B9${newRates.gold_22k_sale}, 18K: \u20B9${newRates.gold_18k_sale}, Silver/kg: \u20B9${newRates.silver_per_kg_sale}) match existing database. Ignored duplicate values.`, "info", {
+      rateId: created.id,
+      rates: newRates
+    });
+  } else {
+    addSyncLog(`Rates CHANGED! Stored new rate entry in database (Record ID #${created.id}, 24K: \u20B9${newRates.gold_24k_sale}, 22K: \u20B9${newRates.gold_22k_sale}, 18K: \u20B9${newRates.gold_18k_sale}, Silver/kg: \u20B9${newRates.silver_per_kg_sale})`, "success", {
+      rateId: created.id,
+      rates: newRates
+    });
+  }
   await writeCurrentRatesToFile(created);
   return created;
 }
 
 // server/routes.ts
+import { GoogleGenAI } from "@google/genai";
 var memoryStorage = multer.memoryStorage();
 var uploadMedia = multer({
   storage: memoryStorage,
@@ -645,9 +1254,12 @@ async function registerRoutes(app) {
         perc_24k_purchase: 1,
         perc_22k_sale: 0.92,
         perc_22k_purchase: 0.9,
+        perc_22k_exchange: 0.91,
         perc_18k_sale: 0.86,
         perc_18k_purchase: 0.8,
+        perc_18k_exchange: 0.85,
         silver_purchase_offset: -5e3,
+        silver_exchange_offset: -3e3,
         check_interval_minutes: 1
       });
     } catch (error) {
@@ -736,6 +1348,18 @@ async function registerRoutes(app) {
       }
     }
   });
+  app.get("/api/rates/sync-logs", async (_req, res) => {
+    try {
+      const settings = await storage.getRateSettings();
+      const intervalMinutes = settings?.check_interval_minutes ?? 5;
+      res.json({
+        status: getSyncStatus(intervalMinutes),
+        logs: getSyncLogs()
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
   app.get("/api/db-health", async (_req, res) => {
     try {
       await ensureDbReady();
@@ -767,6 +1391,7 @@ async function registerRoutes(app) {
     const gold24Sale = 149e3;
     const silverSale = 2300;
     const perc24Purchase = 0.985;
+    const perc24Exchange = 0.99;
     const perc22Sale = 0.92;
     const perc22Purchase = 0.905;
     const perc18Sale = 0.8;
@@ -776,6 +1401,7 @@ async function registerRoutes(app) {
     const result = {
       gold_24k_sale: gold24Sale,
       gold_24k_purchase: roundRate2(gold24Sale * perc24Purchase),
+      gold_24k_exchange: roundRate2(gold24Sale * perc24Exchange),
       gold_22k_sale: roundRate2(gold24Sale * perc22Sale),
       gold_22k_purchase: roundRate2(gold24Sale * perc22Purchase),
       gold_18k_sale: roundRate2(gold24Sale * perc18Sale),
@@ -1058,6 +1684,201 @@ async function registerRoutes(app) {
       res.status(500).json({ message: "Failed to upload banner" });
     }
   });
+  app.post("/api/generate-status-bg", async (req, res) => {
+    const { promptType, customPrompt } = req.body || {};
+    let promptText = "";
+    if (promptType === "marathi_lady") {
+      promptText = "A beautiful traditional Maharashtrian Marathi woman wearing an authentic festive Nauvari saree and traditional pure gold Maharashtrian jewellery including Thushi necklace, Nath nose ring, Mohanmala, Laxmi haar, and gold bangles, smiling gracefully, festive warm ambient lighting, elegant gold jewelry backdrop, hyperrealistic photorealistic 8k vertical wallpaper.";
+    } else if (promptType === "royal_gold") {
+      promptText = "An opulent royal Indian gold palace interior background with glittering golden ornaments, warm ambient candlelight, soft blur depth of field, royal gold silk backdrop, photorealistic vertical wallpaper.";
+    } else if (promptType === "custom" && customPrompt && customPrompt.trim().length > 0) {
+      promptText = `${customPrompt.trim()}, luxury gold jewellery background, photorealistic 8k vertical status background.`;
+    } else {
+      promptText = "A stunning high-resolution luxury background of pure Indian plain gold bangles, gold necklaces, and gold coins artfully arranged on dark crimson velvet or soft golden silk background with gentle warm bokeh lighting. Plain gold jewellery backdrop for a gold rate banner, photorealistic vertical 9:16 wallpaper.";
+    }
+    const apiKey = process.env.GEMINI_API_KEY;
+    const createFallbackSvg = (theme, customTxt) => {
+      let themeArt = "";
+      if (theme === "marathi_lady") {
+        themeArt = `
+          <!-- Maharashtrian Traditional Gold Lady Profile Art -->
+          <g transform="translate(540, 960)" opacity="0.35">
+            <!-- Glowing Halo -->
+            <circle cx="0" cy="-80" r="320" fill="url(#glow)" />
+            <!-- Silhouette & Gold Jewellery Art -->
+            <!-- Hair Bun with Gajra -->
+            <path d="M -120,-220 C -180,-200 -220,-120 -190,-50 C -170,-10 -130,-10 -100,-40" fill="none" stroke="url(#goldGrad)" stroke-width="12" />
+            <!-- Traditional Nath (Nose Ring) -->
+            <circle cx="-15" cy="-70" r="35" fill="none" stroke="url(#goldGrad)" stroke-width="6" />
+            <circle cx="-35" cy="-70" r="10" fill="#FFE885" />
+            <circle cx="-15" cy="-35" r="8" fill="#FF5555" />
+            <!-- Thushi Choker Necklace -->
+            <path d="M -160,80 Q 0,160 160,80" fill="none" stroke="url(#goldGrad)" stroke-width="28" stroke-dasharray="14 6" />
+            <path d="M -160,80 Q 0,160 160,80" fill="none" stroke="#FFE885" stroke-width="8" />
+            <!-- Laxmi Haar Long Necklace -->
+            <path d="M -220,100 Q 0,380 220,100" fill="none" stroke="url(#goldGrad)" stroke-width="18" />
+            <!-- Coins on Laxmi Haar -->
+            <circle cx="-150" cy="180" r="18" fill="url(#goldGrad)" />
+            <circle cx="-80" cy="230" r="18" fill="url(#goldGrad)" />
+            <circle cx="0" cy="250" r="22" fill="url(#goldGrad)" />
+            <circle cx="80" cy="230" r="18" fill="url(#goldGrad)" />
+            <circle cx="150" cy="180" r="18" fill="url(#goldGrad)" />
+          </g>
+        `;
+      } else if (theme === "royal_gold") {
+        themeArt = `
+          <!-- Royal Indian Palace Arch & Mandala -->
+          <g transform="translate(540, 960)" opacity="0.4">
+            <!-- Royal Arch Frame -->
+            <path d="M -450,-700 C -450,-300 -200,-900 0,-900 C 200,-900 450,-300 450,-700" fill="none" stroke="url(#goldGrad)" stroke-width="12" />
+            <path d="M -420,-680 C -420,-300 -180,-860 0,-860 C 180,-860 420,-300 420,-680" fill="none" stroke="#FFE885" stroke-width="3" />
+            <!-- Grand Mandala Central Ring -->
+            <circle cx="0" cy="-100" r="350" fill="none" stroke="url(#goldGrad)" stroke-width="8" />
+            <circle cx="0" cy="-100" r="320" fill="none" stroke="#FFE885" stroke-width="2" stroke-dasharray="12 12" />
+            <circle cx="0" cy="-100" r="280" fill="none" stroke="url(#goldGrad)" stroke-width="4" />
+          </g>
+        `;
+      } else {
+        themeArt = `
+          <!-- Plain Gold Bangles & Coins Backdrop -->
+          <g transform="translate(540, 960)" opacity="0.45">
+            <!-- Big Faceted Gold Bangle 1 -->
+            <ellipse cx="-80" cy="-120" rx="380" ry="220" fill="none" stroke="url(#goldGrad)" stroke-width="42" transform="rotate(-15)" />
+            <ellipse cx="-80" cy="-120" rx="380" ry="220" fill="none" stroke="#FFE885" stroke-width="6" transform="rotate(-15)" />
+            
+            <!-- Faceted Gold Bangle 2 -->
+            <ellipse cx="100" cy="80" rx="400" ry="240" fill="none" stroke="url(#goldGrad)" stroke-width="48" transform="rotate(12)" />
+            <ellipse cx="100" cy="80" rx="400" ry="240" fill="none" stroke="#FFFFFF" stroke-width="8" transform="rotate(12)" opacity="0.7" />
+
+            <!-- Gold Coins Scattered -->
+            <g fill="url(#goldGrad)" stroke="#FFE885" stroke-width="3">
+              <circle cx="-280" cy="220" r="45" />
+              <circle cx="-180" cy="300" r="55" />
+              <circle cx="260" cy="-280" r="50" />
+              <circle cx="340" cy="-180" r="40" />
+            </g>
+          </g>
+        `;
+      }
+      const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1920" width="1080" height="1920">
+        <defs>
+          <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#140003" />
+            <stop offset="35%" stop-color="#38020a" />
+            <stop offset="70%" stop-color="#240006" />
+            <stop offset="100%" stop-color="#0a0002" />
+          </linearGradient>
+          <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#FFF3A1" />
+            <stop offset="25%" stop-color="#E5C158" />
+            <stop offset="50%" stop-color="#9E7817" />
+            <stop offset="75%" stop-color="#FCDD6B" />
+            <stop offset="100%" stop-color="#B58B1B" />
+          </linearGradient>
+          <radialGradient id="glow" cx="50%" cy="50%" r="60%">
+            <stop offset="0%" stop-color="#E5C158" stop-opacity="0.4" />
+            <stop offset="60%" stop-color="#9E7817" stop-opacity="0.15" />
+            <stop offset="100%" stop-color="#000000" stop-opacity="0" />
+          </radialGradient>
+          <pattern id="goldPattern" width="100" height="100" patternUnits="userSpaceOnUse">
+            <circle cx="50" cy="50" r="30" fill="none" stroke="#E5C158" stroke-width="0.8" opacity="0.1" />
+          </pattern>
+        </defs>
+
+        <!-- Rich Velvet Crimson Canvas -->
+        <rect width="1080" height="1920" fill="url(#bgGrad)" />
+        <rect width="1080" height="1920" fill="url(#goldPattern)" />
+        <circle cx="540" cy="960" r="750" fill="url(#glow)" />
+
+        ${themeArt}
+
+        <!-- Sparkling Gold Dust Particles -->
+        <circle cx="180" cy="280" r="6" fill="#FFF3A1" opacity="0.8" />
+        <circle cx="900" cy="380" r="9" fill="#FCDD6B" opacity="0.7" />
+        <circle cx="220" cy="1400" r="12" fill="#FFF3A1" opacity="0.6" />
+        <circle cx="860" cy="1550" r="8" fill="#E5C158" opacity="0.8" />
+        <circle cx="540" cy="300" r="7" fill="#FFF" opacity="0.9" />
+
+        <!-- Outer Gold Border Frame -->
+        <rect x="30" y="30" width="1020" height="1860" rx="24" fill="none" stroke="url(#goldGrad)" stroke-width="6" opacity="0.6" />
+        <rect x="42" y="42" width="996" height="1836" rx="16" fill="none" stroke="#FFE885" stroke-width="2" opacity="0.3" />
+      </svg>`;
+      return `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
+    };
+    if (!apiKey) {
+      return res.json({
+        success: true,
+        imageUrl: createFallbackSvg(promptType),
+        isFallback: true,
+        notice: "GEMINI_API_KEY is not configured on the server. Showing luxury gold template."
+      });
+    }
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build"
+          }
+        }
+      });
+      const candidateModels = [
+        "gemini-3.1-flash-lite-image",
+        "imagen-3.0-generate-002",
+        "gemini-2.5-flash"
+      ];
+      let lastError = null;
+      let imageUrl = null;
+      for (const modelName of candidateModels) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: promptText,
+            config: {
+              imageConfig: {
+                aspectRatio: "9:16"
+              }
+            }
+          });
+          if (response.candidates?.[0]?.content?.parts) {
+            for (const part of response.candidates[0].content.parts) {
+              if (part.inlineData) {
+                const mime = part.inlineData.mimeType || "image/png";
+                imageUrl = `data:${mime};base64,${part.inlineData.data}`;
+                break;
+              }
+            }
+          }
+          if (imageUrl) break;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      if (imageUrl) {
+        return res.json({
+          success: true,
+          imageUrl,
+          promptText
+        });
+      }
+      const errMessage = lastError?.message || String(lastError || "");
+      const isQuotaError = errMessage.includes("429") || errMessage.includes("RESOURCE_EXHAUSTED") || errMessage.includes("Quota");
+      return res.json({
+        success: true,
+        imageUrl: createFallbackSvg(promptType),
+        isFallback: true,
+        notice: isQuotaError ? "Gemini API free tier quota limit was reached. Showing luxury gold artwork template." : "Image generation model busy. Showing luxury gold artwork template."
+      });
+    } catch (error) {
+      console.error("Gemini AI Image Generation Error:", error);
+      return res.json({
+        success: true,
+        imageUrl: createFallbackSvg(promptType),
+        isFallback: true,
+        notice: "Using luxury gold artwork template as fallback."
+      });
+    }
+  });
   app.get("/api/system/info", async (req, res) => {
     try {
       const memUsage = process.memoryUsage();
@@ -1108,14 +1929,100 @@ function log(message, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+// server/vite.ts
+import express from "express";
+import fs from "fs";
+import path2 from "path";
+import { createServer as createViteServer, createLogger } from "vite";
+
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import path from "path";
+import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
+var vite_config_default = defineConfig({
+  plugins: [
+    react(),
+    runtimeErrorOverlay(),
+    ...process.env.NODE_ENV !== "production" && process.env.REPL_ID !== void 0 ? [
+      await import("@replit/vite-plugin-cartographer").then(
+        (m) => m.cartographer()
+      )
+    ] : []
+  ],
+  resolve: {
+    alias: {
+      "@": path.resolve(import.meta.dirname, "client", "src"),
+      "@shared": path.resolve(import.meta.dirname, "shared"),
+      "@assets": path.resolve(import.meta.dirname, "attached_assets")
+    }
+  },
+  root: path.resolve(import.meta.dirname, "client"),
+  build: {
+    outDir: path.resolve(import.meta.dirname, "public"),
+    emptyOutDir: true
+  },
+  server: {
+    fs: {
+      strict: true,
+      deny: ["**/.*"]
+    }
+  }
+});
+
+// server/vite.ts
+async function setupVite(app) {
+  const vite = await createViteServer({
+    ...vite_config_default,
+    configFile: false,
+    customLogger: createLogger(),
+    server: {
+      middlewareMode: true,
+      hmr: false
+    },
+    appType: "custom"
+  });
+  app.use(vite.middlewares);
+  app.use("*", async (req, res, next) => {
+    const url = req.originalUrl;
+    if (url.startsWith("/api")) {
+      return next();
+    }
+    try {
+      const clientTemplate = path2.resolve(import.meta.dirname, "..", "client", "index.html");
+      let template = await fs.promises.readFile(clientTemplate, "utf-8");
+      template = await vite.transformIndexHtml(url, template);
+      res.status(200).set({ "Content-Type": "text/html" }).end(template);
+    } catch (e) {
+      vite.ssrFixStacktrace(e);
+      next(e);
+    }
+  });
+}
+function serveStatic(app) {
+  const distPath = path2.resolve(import.meta.dirname, "..", "public");
+  if (!fs.existsSync(distPath)) {
+    throw new Error(
+      `Could not find the build directory: ${distPath}, make sure to build the client first`
+    );
+  }
+  app.use(express.static(distPath));
+  app.use("*", (req, res, next) => {
+    if (req.originalUrl.startsWith("/api")) {
+      return next();
+    }
+    res.sendFile(path2.resolve(distPath, "index.html"));
+  });
+}
+
 // server/app.ts
 async function createApp() {
-  const app = express();
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: false }));
+  const app = express2();
+  app.use(express2.json());
+  app.use(express2.urlencoded({ extended: false }));
   app.use((req, res, next) => {
     const start = Date.now();
-    const path = req.path;
+    const path3 = req.path;
     let capturedJsonResponse = void 0;
     const originalResJson = res.json;
     res.json = function(bodyJson, ...args) {
@@ -1124,8 +2031,8 @@ async function createApp() {
     };
     res.on("finish", () => {
       const duration = Date.now() - start;
-      if (path.startsWith("/api")) {
-        let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      if (path3.startsWith("/api")) {
+        let logLine = `${req.method} ${path3} ${res.statusCode} in ${duration}ms`;
         if (capturedJsonResponse) {
           logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
         }
@@ -1139,7 +2046,7 @@ async function createApp() {
   });
   app.get("/api/health", async (_req, res) => {
     try {
-      const connectionString = getDatabaseUrl2();
+      const connectionString = getDatabaseUrl();
       if (!connectionString) {
         return res.status(500).json({
           status: "unhealthy",
@@ -1161,7 +2068,7 @@ async function createApp() {
   });
   app.get("/api/debug/env", (_req, res) => {
     res.json({
-      hasDatabaseUrl: Boolean(getDatabaseUrl2()),
+      hasDatabaseUrl: Boolean(getDatabaseUrl()),
       nodeEnv: process.env.NODE_ENV,
       vercel: Boolean(process.env.VERCEL)
     });
@@ -1176,7 +2083,7 @@ async function createApp() {
   });
   app.get("/api/debug/db", async (_req, res) => {
     try {
-      const connectionString = getDatabaseUrl2();
+      const connectionString = getDatabaseUrl();
       if (!connectionString) {
         return res.json({
           error: "No DATABASE_URL set",
@@ -1218,6 +2125,15 @@ async function createApp() {
     }
   });
   await registerRoutes(app);
+  app.use("/api/*", (req, res) => {
+    res.status(404).json({ message: `API endpoint not found: ${req.method} ${req.originalUrl}` });
+  });
+  if (process.env.VERCEL) {
+  } else if (process.env.NODE_ENV !== "production") {
+    await setupVite(app);
+  } else {
+    serveStatic(app);
+  }
   app.use((err, _req, res, _next) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";

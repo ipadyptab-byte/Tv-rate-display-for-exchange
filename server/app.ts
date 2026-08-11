@@ -142,7 +142,10 @@ export async function createApp() {
     res.status(404).json({ message: `API endpoint not found: ${req.method} ${req.originalUrl}` });
   });
 
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.VERCEL) {
+    // Vercel serves static frontend files via CDN rewrites in vercel.json.
+    // Serverless functions only need to handle API routes.
+  } else if (process.env.NODE_ENV !== "production") {
     await setupVite(app);
   } else {
     serveStatic(app);
