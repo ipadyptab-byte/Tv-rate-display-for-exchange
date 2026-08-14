@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { mysqlTable, text, integer, real, serial, boolean, timestamp, decimal } from "drizzle-orm/mysql-core";
+import { mysqlTable, text, serial, boolean, timestamp, decimal, int, float, tinyint } from "drizzle-orm/mysql-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -31,8 +31,8 @@ export const displaySettings = mysqlTable("display_settings", {
   text_color: text("text_color").default("#212529"),
   rate_number_font_size: text("rate_number_font_size").default("text-4xl"),
   show_media: boolean("show_media").default(true),
-  rates_display_duration_seconds: integer("rates_display_duration_seconds").default(15),
-  refresh_interval: integer("refresh_interval").default(30),
+  rates_display_duration_seconds: int("rates_display_duration_seconds").default(15),
+  refresh_interval: int("refresh_interval").default(30),
 created_date: timestamp("created_date").defaultNow()});
 
 // Media Items (for ads between rates)
@@ -42,10 +42,10 @@ export const mediaItems = mysqlTable("media_items", {
   file_url: text("file_url"), // Keep for backward compatibility
   file_data: text("file_data"), // Store base64 encoded data
   media_type: text("media_type").notNull(), // 'image' or 'video'
-  duration_seconds: integer("duration_seconds").default(30),
-  order_index: integer("order_index").default(0),
+  duration_seconds: int("duration_seconds").default(30),
+  order_index: int("order_index").default(0),
   is_active: boolean("is_active").default(true),
-  file_size: integer("file_size"),
+  file_size: int("file_size"),
   mime_type: text("mime_type"),
   created_date: timestamp("created_date").defaultNow()
  });
@@ -56,11 +56,11 @@ export const promoImages = mysqlTable("promo_images", {
   name: text("name").notNull(),
   image_url: text("image_url"), // Keep for backward compatibility
   image_data: text("image_data"), // Store base64 encoded data
-  duration_seconds: integer("duration_seconds").default(5),
+  duration_seconds: int("duration_seconds").default(5),
   transition_effect: text("transition_effect").default("fade"),
-  order_index: integer("order_index").default(0),
+  order_index: int("order_index").default(0),
   is_active: boolean("is_active").default(true),
-  file_size: integer("file_size"),
+  file_size: int("file_size"),
   created_date: timestamp("created_date").defaultNow()
  });
 
@@ -69,7 +69,7 @@ export const bannerSettings = mysqlTable("banner_settings", {
   id: serial("id").primaryKey(),
   banner_image_url: text("banner_image_url"), // Keep for backward compatibility
   banner_image_data: text("banner_image_data"), // Store base64 encoded data
-  banner_height: integer("banner_height").default(120),
+  banner_height: int("banner_height").default(120),
   is_active: boolean("is_active").default(true),
   created_date: timestamp("created_date").defaultNow()
 });
@@ -88,7 +88,7 @@ export const rateSettings = mysqlTable("rate_settings", {
   perc_18k_exchange: decimal("perc_18k_exchange", { precision: 6, scale: 5 }).default("0.85"),
   silver_purchase_offset: decimal("silver_purchase_offset", { precision: 10, scale: 2 }).default("-5000"), // purchase = sale + offset
   silver_exchange_offset: decimal("silver_exchange_offset", { precision: 10, scale: 2 }).default("-3000"), // exchange = sale + offset
-  check_interval_minutes: integer("check_interval_minutes").default(5), // auto sync interval
+  check_interval_minutes: int("check_interval_minutes").default(5), // auto sync interval
   created_date: timestamp("created_date").defaultNow()
 });
 
