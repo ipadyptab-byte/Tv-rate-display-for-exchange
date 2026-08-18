@@ -110,6 +110,23 @@ const uploadBanner = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<void> {
+  // Debug endpoint to check database connection
+  app.get("/api/debug/connection", async (_req, res) => {
+    const url = getDatabaseUrl();
+    const hasUrl = Boolean(url);
+    const maskedUrl = url ? url.replace(/:[^:@]+@/, ':****@') : null;
+    
+    await ensureDbReady();
+    const db = getDb();
+    
+    res.json({
+      hasMariaUrl: hasUrl,
+      mariaUrl: maskedUrl,
+      isDbConnected: Boolean(db),
+      timestamp: new Date().toISOString()
+    });
+  });
+
   // Serve binary data from database
   app.get("/api/media/:id/file", async (req, res) => {
     try {
