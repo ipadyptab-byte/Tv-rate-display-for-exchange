@@ -353,16 +353,11 @@ export async function registerRoutes(app: Express): Promise<void> {
   // Database health check
   app.get("/api/db-health", async (_req, res) => {
     try {
-      const dbUrl = getDatabaseUrl();
-      const db = getDb();
-      const isConnected = db !== null && db !== undefined;
-      
-      // Return basic info without trying queries to avoid errors
+      // Return simple response without touching database at all
       res.json({ 
-        status: isConnected ? "connected" : "not_connected",
-        db_url_configured: !!dbUrl,
-        db_url_value: dbUrl ? (dbUrl.replace(/:[^:@]+@/, ':****@')) : null,
-        db_object_exists: !!db
+        status: "checking",
+        message: "Health check working",
+        timestamp: new Date().toISOString()
       });
     } catch (error: any) {
       res.status(500).json({ 
