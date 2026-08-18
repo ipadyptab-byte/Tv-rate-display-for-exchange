@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import express from "express";
 import { storage } from "./storage";
-import { ensureDbReady, getDb, getDatabaseUrl, isDbAvailable } from "./db";
+import { ensureDbReady, getDb, getDatabaseUrl } from "./db";
 import multer from "multer";
 import { z } from "zod";
 import path from "path";
