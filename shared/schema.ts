@@ -92,6 +92,24 @@ export const rateSettings = mysqlTable("rate_settings", {
   created_date: timestamp("created_date").defaultNow()
 });
 
+// Custom schema that accepts both string and number for decimal fields
+export const insertRateSettingsSchema = z.object({
+  id: z.number().optional(),
+  external_rates_url: z.string().optional(),
+  perc_24k_purchase: z.union([z.string(), z.number()]).optional(),
+  perc_24k_exchange: z.union([z.string(), z.number()]).optional(),
+  perc_22k_sale: z.union([z.string(), z.number()]).optional(),
+  perc_22k_purchase: z.union([z.string(), z.number()]).optional(),
+  perc_22k_exchange: z.union([z.string(), z.number()]).optional(),
+  perc_18k_sale: z.union([z.string(), z.number()]).optional(),
+  perc_18k_purchase: z.union([z.string(), z.number()]).optional(),
+  perc_18k_exchange: z.union([z.string(), z.number()]).optional(),
+  silver_purchase_offset: z.union([z.string(), z.number()]).optional(),
+  silver_exchange_offset: z.union([z.string(), z.number()]).optional(),
+  check_interval_minutes: z.number().optional(),
+  created_date: z.date().optional()
+}).omit({ id: true, created_date: true });
+
 // Insert schemas
 export const insertGoldRateSchema = createInsertSchema(goldRates).omit({
   id: true,
@@ -118,10 +136,7 @@ export const insertBannerSettingsSchema = createInsertSchema(bannerSettings).omi
   created_date: true
 });
 
-export const insertRateSettingsSchema = createInsertSchema(rateSettings).omit({
-  id: true,
-  created_date: true
-});
+// Note: insertRateSettingsSchema is defined earlier with custom validation for number/string types
 
 // Types
 export type GoldRate = typeof goldRates.$inferSelect;

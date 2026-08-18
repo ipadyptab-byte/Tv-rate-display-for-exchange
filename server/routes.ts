@@ -16,6 +16,24 @@ import {
 import { syncRatesFromExternal, getSyncLogs, getSyncStatus } from "./ratesSync";
 import { GoogleGenAI } from "@google/genai";
 
+// Helper to convert number fields to strings for MySQL decimal columns
+function convertRateSettingsToDb(settings: any): any {
+  if (!settings) return settings;
+  const decimalFields = [
+    'perc_24k_purchase', 'perc_24k_exchange',
+    'perc_22k_sale', 'perc_22k_purchase', 'perc_22k_exchange',
+    'perc_18k_sale', 'perc_18k_purchase', 'perc_18k_exchange',
+    'silver_purchase_offset', 'silver_exchange_offset'
+  ];
+  const converted = { ...settings };
+  for (const field of decimalFields) {
+    if (converted[field] !== undefined && typeof converted[field] === 'number') {
+      converted[field] = String(converted[field]);
+    }
+  }
+  return converted;
+}
+
 // Configure multer for memory storage (no file system)
 const memoryStorage = multer.memoryStorage();
 
@@ -201,7 +219,9 @@ export async function registerRoutes(app: Express): Promise<void> {
     try {
       const { insertRateSettingsSchema } = await import("@shared/schema");
       const validated = insertRateSettingsSchema.parse(req.body);
-      const created = await storage.createRateSettings(validated);
+      // Convert numbers to strings for decimal fields
+      const settings = convertRateSettingsToDb(validated);
+      const created = await storage.createRateSettings(settings);
       res.status(201).json(created);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -217,7 +237,9 @@ export async function registerRoutes(app: Express): Promise<void> {
       const id = parseInt(req.params.id);
       const { insertRateSettingsSchema } = await import("@shared/schema");
       const validated = insertRateSettingsSchema.partial().parse(req.body);
-      const updated = await storage.updateRateSettings(id, validated);
+      // Convert numbers to strings for decimal fields
+      const settings = convertRateSettingsToDb(validated);
+      const updated = await storage.updateRateSettings(id, settings);
       if (!updated) return res.status(404).json({ message: "Rate settings not found" });
       res.json(updated);
     } catch (error) {
