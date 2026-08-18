@@ -322,7 +322,7 @@ export async function registerRoutes(app: Express): Promise<void> {
   });
 
   // Fetch and store rates from external API
-  // GET /api/rates/sync - fetches latest 24k sale and silver sale, computes others via settings, stores to Postgres
+  // GET /api/rates/sync - fetches latest 24k sale and silver sale, computes others via settings, stores to MariaDB
   app.get("/api/rates/sync", async (req, res) => {
     try {
       const force = req.query.force !== "0";
