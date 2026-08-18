@@ -110,11 +110,25 @@ export const insertRateSettingsSchema = z.object({
   created_date: z.date().optional()
 }).omit({ id: true, created_date: true });
 
-// Insert schemas
-export const insertGoldRateSchema = createInsertSchema(goldRates).omit({
-  id: true,
-  created_date: true
-});
+// Custom schema that accepts both string and number for decimal fields
+export const insertGoldRateSchema = z.object({
+  id: z.number().optional(),
+  gold_24k_sale: z.union([z.string(), z.number()]).optional(),
+  gold_24k_purchase: z.union([z.string(), z.number()]).optional(),
+  gold_24k_exchange: z.union([z.string(), z.number()]).optional(),
+  gold_22k_sale: z.union([z.string(), z.number()]).optional(),
+  gold_22k_purchase: z.union([z.string(), z.number()]).optional(),
+  gold_22k_exchange: z.union([z.string(), z.number()]).optional(),
+  gold_18k_sale: z.union([z.string(), z.number()]).optional(),
+  gold_18k_purchase: z.union([z.string(), z.number()]).optional(),
+  gold_18k_exchange: z.union([z.string(), z.number()]).optional(),
+  silver_per_kg_sale: z.union([z.string(), z.number()]).optional(),
+  silver_per_kg_purchase: z.union([z.string(), z.number()]).optional(),
+  silver_per_kg_exchange: z.union([z.string(), z.number()]).optional(),
+  is_active: z.boolean().optional(),
+  source: z.string().optional(),
+  created_date: z.date().optional()
+}).omit({ id: true, created_date: true });
 
 export const insertDisplaySettingsSchema = createInsertSchema(displaySettings).omit({
   id: true,

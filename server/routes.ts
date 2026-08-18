@@ -34,6 +34,24 @@ function convertRateSettingsToDb(settings: any): any {
   return converted;
 }
 
+// Helper to convert gold rate number fields to strings for MySQL decimal columns
+function convertGoldRateToDb(rate: any): any {
+  if (!rate) return rate;
+  const decimalFields = [
+    'gold_24k_sale', 'gold_24k_purchase', 'gold_24k_exchange',
+    'gold_22k_sale', 'gold_22k_purchase', 'gold_22k_exchange',
+    'gold_18k_sale', 'gold_18k_purchase', 'gold_18k_exchange',
+    'silver_per_kg_sale', 'silver_per_kg_purchase', 'silver_per_kg_exchange'
+  ];
+  const converted = { ...rate };
+  for (const field of decimalFields) {
+    if (converted[field] !== undefined && typeof converted[field] === 'number') {
+      converted[field] = String(converted[field]);
+    }
+  }
+  return converted;
+}
+
 // Configure multer for memory storage (no file system)
 const memoryStorage = multer.memoryStorage();
 
@@ -182,7 +200,9 @@ export async function registerRoutes(app: Express): Promise<void> {
   app.post("/api/rates", async (req, res) => {
     try {
       const validatedData = insertGoldRateSchema.parse(req.body);
-      const newRates = await storage.createGoldRate(validatedData);
+      // Convert numbers to strings for MySQL decimal columns
+      const dbData = convertGoldRateToDb(validatedData);
+      const newRates = await storage.createGoldRate(dbData);
       res.status(201).json(newRates);
     } catch (error) {
       if (error instanceof z.ZodError) {
