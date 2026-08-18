@@ -77,16 +77,16 @@ function calculateAllRates(
   raw22kSale?: number | null,
   raw18kSale?: number | null,
 ) {
-  const perc24Purchase = settings?.perc_24k_purchase ?? 0.985;
-  const perc24Exchange = settings?.perc_24k_exchange ?? 0.99;
-  const perc22Sale = settings?.perc_22k_sale ?? 0.92;
-  const perc22Purchase = settings?.perc_22k_purchase ?? 0.9;
-  const perc22Exchange = settings?.perc_22k_exchange ?? 0.91;
-  const perc18Sale = settings?.perc_18k_sale ?? 0.86;
-  const perc18Purchase = settings?.perc_18k_purchase ?? 0.80;
-  const perc18Exchange = settings?.perc_18k_exchange ?? 0.85;
-  const silverPurchaseOffset = settings?.silver_purchase_offset ?? -5000;
-  const silverExchangeOffset = settings?.silver_exchange_offset ?? -3000;
+  const perc24Purchase = Number(settings?.perc_24k_purchase) ?? 0.985;
+  const perc24Exchange = Number(settings?.perc_24k_exchange) ?? 0.99;
+  const perc22Sale = Number(settings?.perc_22k_sale) ?? 0.92;
+  const perc22Purchase = Number(settings?.perc_22k_purchase) ?? 0.9;
+  const perc22Exchange = Number(settings?.perc_22k_exchange) ?? 0.91;
+  const perc18Sale = Number(settings?.perc_18k_sale) ?? 0.86;
+  const perc18Purchase = Number(settings?.perc_18k_purchase) ?? 0.80;
+  const perc18Exchange = Number(settings?.perc_18k_exchange) ?? 0.85;
+  const silverPurchaseOffset = Number(settings?.silver_purchase_offset) ?? -5000;
+  const silverExchangeOffset = Number(settings?.silver_exchange_offset) ?? -3000;
 
   // Use raw values from API payload if provided, otherwise compute from 24K sale
   const gold22Sale = (raw22kSale && raw22kSale > 0)

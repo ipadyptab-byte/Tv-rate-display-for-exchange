@@ -110,6 +110,11 @@ export default function TVDisplay() {
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
 
+  // Initial sync on mount to get fresh rates
+  useEffect(() => {
+    fetch("/api/rates/sync?force=true").catch(() => {});
+  }, []);
+
   // Data queries
   const { data: currentRates } = useQuery({
     queryKey: ["/api/rates/current"],

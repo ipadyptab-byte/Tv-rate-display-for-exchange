@@ -378,8 +378,28 @@ export class PostgresStorage implements IStorage {
   private async useDb() {
     await ensureDbReady();
     const db = getDb();
-    if (!db || !isDbAvailable()) return null;
+    const available = isDbAvailable();
+    if (!db || !available) return null;
     return db;
+  }
+
+  // Helper for MySQL inserts (since RETURNING doesn't work with MySQL)
+  private async insertAndFetch<T>(table: any, values: any, idColumn: any): Promise<T> {
+    const db = await this.useDb();
+    if (!db) throw new Error("Database not available");
+    const result = await db.insert(table).values(values);
+    const insertId = (result as any).insertId;
+    const [rows] = await db.select().from(table).where(eq(table[idColumn], insertId));
+    return rows[0];
+  }
+
+  // Helper for MySQL updates (since RETURNING doesn't work with MySQL)
+  private async updateAndFetch<T>(table: any, values: any, idColumn: any, id: number): Promise<T> {
+    const db = await this.useDb();
+    if (!db) throw new Error("Database not available");
+    await db.update(table).set(values).where(eq(table[idColumn], id));
+    const [rows] = await db.select().from(table).where(eq(table[idColumn], id));
+    return rows[0];
   }
 
   // Gold Rates
@@ -431,8 +451,11 @@ export class PostgresStorage implements IStorage {
       }
 
       await db.update(goldRates).set({ is_active: false });
-      const result = await db.insert(goldRates).values(processedRate).returning();
-      return result[0];
+      const result = await db.insert(goldRates).values(processedRate);
+      // For MySQL, we need to get the inserted ID and fetch the record
+      const insertId = (result as any).insertId;
+      const [rows] = await db.select().from(goldRates).where(eq(goldRates.id, insertId));
+      return rows[0];
     } catch {
       return this.memFallback.createGoldRate(processedRate);
     }
@@ -441,13 +464,7 @@ export class PostgresStorage implements IStorage {
   async updateGoldRate(id: number, rate: Partial<InsertGoldRate>): Promise<GoldRate | undefined> {
     const processedRate = processRateData(rate);
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.updateGoldRate(id, processedRate);
-      const result = await db.update(goldRates)
-        .set(processedRate)
-        .where(eq(goldRates.id, id))
-        .returning();
-      return result[0];
+      return await this.updateAndFetch<GoldRate>(goldRates, processedRate, goldRates.id, id);
     } catch {
       return this.memFallback.updateGoldRate(id, processedRate);
     }
@@ -456,10 +473,7 @@ export class PostgresStorage implements IStorage {
   // Display Settings
   async createDisplaySettings(settings: InsertDisplaySettings): Promise<DisplaySettings> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.createDisplaySettings(settings);
-      const result = await db.insert(displaySettings).values(settings).returning();
-      return result[0];
+      return await this.insertAndFetch<DisplaySettings>(displaySettings, settings, displaySettings.id);
     } catch {
       return this.memFallback.createDisplaySettings(settings);
     }
@@ -480,13 +494,7 @@ export class PostgresStorage implements IStorage {
 
   async updateDisplaySettings(id: number, settings: Partial<InsertDisplaySettings>): Promise<DisplaySettings | undefined> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.updateDisplaySettings(id, settings);
-      const result = await db.update(displaySettings)
-        .set(settings)
-        .where(eq(displaySettings.id, id))
-        .returning();
-      return result[0];
+      return await this.updateAndFetch<DisplaySettings>(displaySettings, settings, displaySettings.id, id);
     } catch {
       return this.memFallback.updateDisplaySettings(id, settings);
     }
@@ -508,10 +516,7 @@ export class PostgresStorage implements IStorage {
 
   async createRateSettings(settings: InsertRateSettings): Promise<RateSettings> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.createRateSettings(settings);
-      const result = await db.insert(rateSettings).values(settings).returning();
-      return result[0];
+      return await this.insertAndFetch<RateSettings>(rateSettings, settings, rateSettings.id);
     } catch {
       return this.memFallback.createRateSettings(settings);
     }
@@ -519,13 +524,7 @@ export class PostgresStorage implements IStorage {
 
   async updateRateSettings(id: number, settings: Partial<InsertRateSettings>): Promise<RateSettings | undefined> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.updateRateSettings(id, settings);
-      const result = await db.update(rateSettings)
-        .set(settings)
-        .where(eq(rateSettings.id, id))
-        .returning();
-      return result[0];
+      return await this.updateAndFetch<RateSettings>(rateSettings, settings, rateSettings.id, id);
     } catch {
       return this.memFallback.updateRateSettings(id, settings);
     }
@@ -552,10 +551,7 @@ export class PostgresStorage implements IStorage {
 
   async createMediaItem(item: InsertMediaItem): Promise<MediaItem> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.createMediaItem(item);
-      const result = await db.insert(mediaItems).values(item).returning();
-      return result[0];
+      return await this.insertAndFetch<MediaItem>(mediaItems, item, mediaItems.id);
     } catch {
       return this.memFallback.createMediaItem(item);
     }
@@ -563,13 +559,7 @@ export class PostgresStorage implements IStorage {
 
   async updateMediaItem(id: number, item: Partial<InsertMediaItem>): Promise<MediaItem | undefined> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.updateMediaItem(id, item);
-      const result = await db.update(mediaItems)
-        .set(item)
-        .where(eq(mediaItems.id, id))
-        .returning();
-      return result[0];
+      return await this.updateAndFetch<MediaItem>(mediaItems, item, mediaItems.id, id);
     } catch {
       return this.memFallback.updateMediaItem(id, item);
     }
@@ -579,8 +569,8 @@ export class PostgresStorage implements IStorage {
     try {
       const db = await this.useDb();
       if (!db) return this.memFallback.deleteMediaItem(id);
-      const result = await db.delete(mediaItems).where(eq(mediaItems.id, id)).returning();
-      return result.length > 0;
+      await db.delete(mediaItems).where(eq(mediaItems.id, id));
+      return true;
     } catch {
       return this.memFallback.deleteMediaItem(id);
     }
@@ -607,10 +597,7 @@ export class PostgresStorage implements IStorage {
 
   async createPromoImage(image: InsertPromoImage): Promise<PromoImage> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.createPromoImage(image);
-      const result = await db.insert(promoImages).values(image).returning();
-      return result[0];
+      return await this.insertAndFetch<PromoImage>(promoImages, image, promoImages.id);
     } catch {
       return this.memFallback.createPromoImage(image);
     }
@@ -618,13 +605,7 @@ export class PostgresStorage implements IStorage {
 
   async updatePromoImage(id: number, image: Partial<InsertPromoImage>): Promise<PromoImage | undefined> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.updatePromoImage(id, image);
-      const result = await db.update(promoImages)
-        .set(image)
-        .where(eq(promoImages.id, id))
-        .returning();
-      return result[0];
+      return await this.updateAndFetch<PromoImage>(promoImages, image, promoImages.id, id);
     } catch {
       return this.memFallback.updatePromoImage(id, image);
     }
@@ -634,8 +615,8 @@ export class PostgresStorage implements IStorage {
     try {
       const db = await this.useDb();
       if (!db) return this.memFallback.deletePromoImage(id);
-      const result = await db.delete(promoImages).where(eq(promoImages.id, id)).returning();
-      return result.length > 0;
+      await db.delete(promoImages).where(eq(promoImages.id, id));
+      return true;
     } catch {
       return this.memFallback.deletePromoImage(id);
     }
@@ -658,10 +639,7 @@ export class PostgresStorage implements IStorage {
 
   async createBannerSettings(banner: InsertBannerSettings): Promise<BannerSettings> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.createBannerSettings(banner);
-      const result = await db.insert(bannerSettings).values(banner).returning();
-      return result[0];
+      return await this.insertAndFetch<BannerSettings>(bannerSettings, banner, bannerSettings.id);
     } catch {
       return this.memFallback.createBannerSettings(banner);
     }
@@ -669,13 +647,7 @@ export class PostgresStorage implements IStorage {
 
   async updateBannerSettings(id: number, banner: Partial<InsertBannerSettings>): Promise<BannerSettings | undefined> {
     try {
-      const db = await this.useDb();
-      if (!db) return this.memFallback.updateBannerSettings(id, banner);
-      const result = await db.update(bannerSettings)
-        .set(banner)
-        .where(eq(bannerSettings.id, id))
-        .returning();
-      return result[0];
+      return await this.updateAndFetch<BannerSettings>(bannerSettings, banner, bannerSettings.id, id);
     } catch {
       return this.memFallback.updateBannerSettings(id, banner);
     }

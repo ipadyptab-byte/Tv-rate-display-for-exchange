@@ -167,8 +167,17 @@ async function ensureSchema(pool: mysql.Pool) {
   }
 }
 
-function init() {
-  if (db && initPromise) return;
+function init(forceNew = false) {
+  // Only skip if we've already successfully connected (and not forcing new)
+  if (!forceNew && db && isDbConnected) return;
+
+  // Reset state if forcing new connection (for serverless)
+  if (forceNew) {
+    isDbConnected = false;
+    db = null;
+    pool = null;
+    initPromise = null;
+  }
 
   const connectionString = getDatabaseUrl();
   console.log("[DB] getDatabaseUrl returned:", connectionString ? connectionString.replace(/:[^:@]+@/, ':****@') : 'NULL');
@@ -215,7 +224,7 @@ function init() {
         }
       });
 
-    db = drizzle({ client: pool, schema });
+    db = drizzle({ client: pool, schema, mode: "default" });
   } catch (err: any) {
     console.log("[DB] MariaDB unavailable - in-memory storage:", err.message);
     isDbConnected = false;
@@ -228,13 +237,16 @@ function init() {
 }
 
 export function getDb() {
-  init();
+  // For serverless: always try to create fresh connection if previous one failed
+  const needsNewConnection = !db || !isDbConnected;
+  init(needsNewConnection);
   return isDbConnected ? db : null;
 }
 
 // Database initialization
 export async function ensureDbReady() {
-  init();
+  const needsNewConnection = !db || !isDbConnected;
+  init(needsNewConnection);
   if (initPromise) {
     try {
       await initPromise;
