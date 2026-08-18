@@ -275,6 +275,8 @@ export async function registerRoutes(app: Express): Promise<void> {
   app.get("/api/rates/debug", async (req, res) => {
     try {
       const url = process.env.EXTERNAL_RATES_URL;
+      const mariaUrl = process.env.MARIA_URL ? (process.env.MARIA_URL.replace(/:[^:@]+@/, ':****@')) : 'NOT SET';
+      
       if (!url) {
         return res.json({ error: "EXTERNAL_RATES_URL not set" });
       }
@@ -286,6 +288,7 @@ export async function registerRoutes(app: Express): Promise<void> {
       const currentRates = await storage.getCurrentRates();
       
       res.json({
+        mariaUrl,
         externalApiUrl: url,
         externalApiStatus: response.ok,
         externalApiData: data,
