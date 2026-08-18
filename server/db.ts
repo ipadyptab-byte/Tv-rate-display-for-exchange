@@ -230,8 +230,12 @@ export async function ensureDbReady() {
   if (initPromise) {
     try {
       await initPromise;
-    } catch {
+      console.log("[DB] ensureDbReady: initPromise resolved, isDbConnected:", isDbConnected);
+    } catch (err: any) {
+      console.error("[DB] ensureDbReady: initPromise rejected:", err?.message || err);
       isDbConnected = false;
     }
+  } else {
+    console.log("[DB] ensureDbReady: no initPromise, isDbConnected:", isDbConnected);
   }
 }
