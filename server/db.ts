@@ -180,11 +180,18 @@ function init() {
   }
 
   try {
+    console.log("[DB] Creating pool with connection string:", connectionString.replace(/:[^:@]+@/, ':****@'));
     pool = mysql.createPool({
       uri: connectionString,
       waitForConnections: true,
       connectionLimit: 10,
-      connectTimeout: 10000,
+      connectTimeout: 30000,
+    });
+    pool.on('connection', (connection) => {
+      console.log("[DB] New connection established");
+    });
+    pool.on('error', (err) => {
+      console.error("[DB] Pool error:", err.message);
     });
 
     pool.on("error", (err) => {
