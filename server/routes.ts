@@ -353,38 +353,18 @@ export async function registerRoutes(app: Express): Promise<void> {
   // Database health check
   app.get("/api/db-health", async (_req, res) => {
     try {
-      console.log("[ROUTES] db-health: Starting...");
       const dbUrl = getDatabaseUrl();
-      console.log("[ROUTES] db-health: dbUrl:", dbUrl ? "set" : "not set");
-      
-      // Initialize db first
-      await ensureDbReady();
-      
       const db = getDb();
-      console.log("[ROUTES] db-health: db object:", db ? "exists" : "null");
       const isConnected = db !== null && db !== undefined;
       
-      // Try a simple query if db exists
-      let queryResult = null;
-      if (isConnected && db) {
-        try {
-          const result = await db.select().from(goldRates).limit(1);
-          queryResult = result ? "success" : "empty";
-        } catch (qerr: any) {
-          queryResult = "error: " + qerr.message;
-        }
-      }
-      
+      // Return basic info without trying queries to avoid errors
       res.json({ 
         status: isConnected ? "connected" : "not_connected",
         db_url_configured: !!dbUrl,
         db_url_value: dbUrl ? (dbUrl.replace(/:[^:@]+@/, ':****@')) : null,
-        isDbAvailable: isConnected,
-        db_object_exists: !!db,
-        query_result: queryResult
+        db_object_exists: !!db
       });
     } catch (error: any) {
-      console.error("[ROUTES] db-health error:", error.message || error);
       res.status(500).json({ 
         status: "error", 
         error: error.message || String(error)
