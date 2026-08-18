@@ -353,9 +353,15 @@ export async function registerRoutes(app: Express): Promise<void> {
   // Database health check
   app.get("/api/db-health", async (_req, res) => {
     try {
+      console.log("[ROUTES] db-health: Starting...");
       const dbUrl = getDatabaseUrl();
-      // Direct check without calling isDbAvailable to avoid errors
+      console.log("[ROUTES] db-health: dbUrl:", dbUrl ? "set" : "not set");
+      
+      // Initialize db first
+      await ensureDbReady();
+      
       const db = getDb();
+      console.log("[ROUTES] db-health: db object:", db ? "exists" : "null");
       const isConnected = db !== null && db !== undefined;
       
       res.json({ 
@@ -365,10 +371,11 @@ export async function registerRoutes(app: Express): Promise<void> {
         isDbAvailable: isConnected,
         db_object_exists: !!db
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error("[ROUTES] db-health error:", error.message || error);
       res.status(500).json({ 
         status: "error", 
-        error: (error as Error).message 
+        error: error.message || String(error)
       });
     }
   });
