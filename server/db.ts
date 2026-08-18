@@ -225,6 +225,7 @@ export function getDb() {
   return isDbConnected ? db : null;
 }
 
+// Database initialization
 export async function ensureDbReady() {
   init();
   if (initPromise) {
