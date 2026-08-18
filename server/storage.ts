@@ -372,7 +372,7 @@ export class MemStorage implements IStorage {
   }
 }
 
-export class PostgresStorage implements IStorage {
+export class MariaStorage implements IStorage {
   private memFallback = new MemStorage();
 
   private async useDb() {
@@ -654,4 +654,4 @@ export class PostgresStorage implements IStorage {
   }
 }
 
-export const storage = new PostgresStorage();
+export const storage = new MariaStorage();
