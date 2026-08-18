@@ -171,8 +171,10 @@ function init() {
   if (db && initPromise) return;
 
   const connectionString = getDatabaseUrl();
+  console.log("[DB] getDatabaseUrl returned:", connectionString ? connectionString.replace(/:[^:@]+@/, ':****@') : 'NULL');
+  
   if (!connectionString) {
-    console.warn("[AI Studio] DATABASE_URL not set — using in-memory storage fallback");
+    console.warn("[DB] MARIA_URL not set — using in-memory storage fallback");
     isDbConnected = false;
     return;
   }
@@ -193,10 +195,11 @@ function init() {
 
     initPromise = ensureSchema(pool)
       .then(() => {
+        console.log("[DB] Database connection successful!");
         isDbConnected = true;
       })
       .catch(async (err) => {
-        console.error("[AI Studio] Database connection error:", err);
+        console.error("[DB] Database connection error:", err.message);
         isDbConnected = false;
         db = null;
         if (pool) {
@@ -207,7 +210,7 @@ function init() {
 
     db = drizzle({ client: pool, schema });
   } catch (err: any) {
-    console.log("[AI Studio] Database notice: MariaDB unavailable, using in-memory storage.");
+    console.log("[DB] MariaDB unavailable - in-memory storage:", err.message);
     isDbConnected = false;
     db = null;
     if (pool) {
