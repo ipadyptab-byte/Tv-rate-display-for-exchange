@@ -355,12 +355,24 @@ export async function registerRoutes(app: Express): Promise<void> {
     try {
       await ensureDbReady();
       const db = getDb();
+      const isConnected = isDbAvailable();
+      const dbUrl = getDatabaseUrl();
+      
+      if (!db || !isConnected) {
+        return res.json({ 
+          status: "not_connected", 
+          db_url_configured: !!dbUrl,
+          db_url_value: dbUrl ? (dbUrl.replace(/:[^:@]+@/, ':****@')) : null,
+          error: "Database not available - check MARIA_URL environment variable"
+        });
+      }
+      
       const result = await db.select().from(goldRates).limit(100);
       res.json({ 
         status: "connected", 
         table_exists: true, 
         row_count: result.length,
-        db_url: getDatabaseUrl() ? "configured" : "missing",
+        db_url: dbUrl ? "configured" : "missing",
         sample_data: result.slice(0, 3)
       });
     } catch (error) {
