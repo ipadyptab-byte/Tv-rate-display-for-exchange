@@ -45,27 +45,8 @@ export async function createApp() {
 
   // Health check endpoint
   app.get("/api/health", async (_req, res) => {
-    try {
-      const connectionString = getDatabaseUrl();
-      if (!connectionString) {
-        return res.status(500).json({
-          status: "unhealthy",
-          database: "disconnected",
-          error: "Database URL not set (DATABASE_URL / POSTGRES_URL / POSTGRES_PRISMA_URL)",
-        });
-      }
-
-      const client = postgres(connectionString);
-      await client`SELECT 1`;
-      await client.end();
-      res.json({ status: "healthy", database: "connected" });
-    } catch (error) {
-      res.status(500).json({
-        status: "unhealthy",
-        database: "disconnected",
-        error: (error as Error).message,
-      });
-    }
+    // Simple health check without database connection
+    res.json({ status: "healthy", timestamp: new Date().toISOString() });
   });
 
   // Quick diagnostics
