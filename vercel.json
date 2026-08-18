@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "name": "tvdisplay-rates",
   "buildCommand": "npm run build && npm run build:vercel",
   "outputDirectory": "public",
   "installCommand": "npm install",
